@@ -30,7 +30,11 @@ impl Transport for MockTransport {
     }
 
     async fn write(&mut self, data: &str) -> Result<()> {
-        self.state.lock().await.written_messages.push(data.to_string());
+        self.state
+            .lock()
+            .await
+            .written_messages
+            .push(data.to_string());
         Ok(())
     }
 
@@ -57,10 +61,9 @@ async fn test_permission_callback_allow() {
     let transport = MockTransport::default();
     let state = transport.state.clone();
     let callback = Arc::new(
-        |_tool_name: String, _input: Value, _ctx: ToolPermissionContext| async move {
-            Ok(PermissionResult::Allow(PermissionResultAllow::default()))
-        }
-        .boxed(),
+        |_tool_name: String, _input: Value, _ctx: ToolPermissionContext| {
+            async move { Ok(PermissionResult::Allow(PermissionResultAllow::default())) }.boxed()
+        },
     );
 
     let mut query = Query::new(
@@ -82,7 +85,10 @@ async fn test_permission_callback_allow() {
             "permission_suggestions": []
         }
     });
-    query.handle_control_request(request).await.expect("handled");
+    query
+        .handle_control_request(request)
+        .await
+        .expect("handled");
 
     let state = state.lock().await;
     assert_eq!(state.written_messages.len(), 1);
@@ -94,13 +100,15 @@ async fn test_permission_callback_deny() {
     let transport = MockTransport::default();
     let state = transport.state.clone();
     let callback = Arc::new(
-        |_tool_name: String, _input: Value, _ctx: ToolPermissionContext| async move {
-            Ok(PermissionResult::Deny(PermissionResultDeny {
-                message: "Security policy violation".to_string(),
-                interrupt: false,
-            }))
-        }
-        .boxed(),
+        |_tool_name: String, _input: Value, _ctx: ToolPermissionContext| {
+            async move {
+                Ok(PermissionResult::Deny(PermissionResultDeny {
+                    message: "Security policy violation".to_string(),
+                    interrupt: false,
+                }))
+            }
+            .boxed()
+        },
     );
 
     let mut query = Query::new(
@@ -122,7 +130,10 @@ async fn test_permission_callback_deny() {
             "permission_suggestions": []
         }
     });
-    query.handle_control_request(request).await.expect("handled");
+    query
+        .handle_control_request(request)
+        .await
+        .expect("handled");
 
     let state = state.lock().await;
     assert_eq!(state.written_messages.len(), 1);
@@ -135,16 +146,16 @@ async fn test_hook_field_name_conversion() {
     let transport = MockTransport::default();
     let state = transport.state.clone();
 
-    let hook_callback = Arc::new(
-        |_input: Value, _tool_use_id: Option<String>, _ctx| async move {
+    let hook_callback = Arc::new(|_input: Value, _tool_use_id: Option<String>, _ctx| {
+        async move {
             Ok(json!({
                 "async_": true,
                 "continue_": false,
                 "stopReason": "Testing field conversion"
             }))
         }
-        .boxed(),
-    );
+        .boxed()
+    });
 
     let mut hook_matcher = HookMatcher::default();
     hook_matcher.hooks.push(hook_callback);
@@ -182,7 +193,10 @@ async fn test_hook_field_name_conversion() {
             "tool_use_id": null
         }
     });
-    query.handle_control_request(request).await.expect("handled");
+    query
+        .handle_control_request(request)
+        .await
+        .expect("handled");
 
     let state = state.lock().await;
     let last = state.written_messages.last().expect("response");

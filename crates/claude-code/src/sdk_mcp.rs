@@ -49,7 +49,11 @@ pub struct McpSdkServer {
 }
 
 impl McpSdkServer {
-    pub fn new(name: impl Into<String>, version: impl Into<String>, tools: Vec<SdkMcpTool>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        version: impl Into<String>,
+        tools: Vec<SdkMcpTool>,
+    ) -> Self {
         let mut tool_map = HashMap::new();
         for tool in tools {
             tool_map.insert(tool.name.clone(), tool);
@@ -74,13 +78,13 @@ impl McpSdkServer {
                     "description": tool.description,
                     "inputSchema": tool.input_schema,
                 });
-                if let Some(annotations) = &tool.annotations {
-                    if let Value::Object(ref mut obj) = base {
-                        obj.insert(
-                            "annotations".to_string(),
-                            serde_json::to_value(annotations).unwrap_or(Value::Null),
-                        );
-                    }
+                if let Some(annotations) = &tool.annotations
+                    && let Value::Object(ref mut obj) = base
+                {
+                    obj.insert(
+                        "annotations".to_string(),
+                        serde_json::to_value(annotations).unwrap_or(Value::Null),
+                    );
                 }
                 base
             })
@@ -126,4 +130,3 @@ pub fn create_sdk_mcp_server(
         instance: server,
     }
 }
-

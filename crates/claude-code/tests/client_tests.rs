@@ -2,9 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use claude_code_client_sdk::{
-    ClaudeSdkClient, InputPrompt, Message, Result, Transport,
-};
+use claude_code_client_sdk::{ClaudeSdkClient, InputPrompt, Message, Result, Transport};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
@@ -41,7 +39,11 @@ impl Transport for MockTransport {
     }
 
     async fn write(&mut self, data: &str) -> Result<()> {
-        self.state.lock().await.written_messages.push(data.to_string());
+        self.state
+            .lock()
+            .await
+            .written_messages
+            .push(data.to_string());
         Ok(())
     }
 
@@ -77,7 +79,12 @@ async fn test_manual_connect_disconnect() {
 
     let state = state.lock().await;
     assert!(!state.connected);
-    assert!(state.written_messages.iter().any(|msg| msg.contains("\"subtype\":\"initialize\"")));
+    assert!(
+        state
+            .written_messages
+            .iter()
+            .any(|msg| msg.contains("\"subtype\":\"initialize\""))
+    );
 }
 
 #[tokio::test]
@@ -96,10 +103,13 @@ async fn test_query_sends_user_message_with_session() {
         .expect("query");
 
     let state = state.lock().await;
-    assert!(state
-        .written_messages
-        .iter()
-        .any(|msg| msg.contains("\"type\":\"user\"") && msg.contains("\"session_id\":\"default\"")));
+    assert!(
+        state
+            .written_messages
+            .iter()
+            .any(|msg| msg.contains("\"type\":\"user\"")
+                && msg.contains("\"session_id\":\"default\""))
+    );
 }
 
 #[tokio::test]
@@ -162,10 +172,12 @@ async fn test_interrupt_sends_control_request() {
     client.interrupt().await.expect("interrupt");
 
     let state = state.lock().await;
-    assert!(state
-        .written_messages
-        .iter()
-        .any(|msg| msg.contains("\"subtype\":\"interrupt\"")));
+    assert!(
+        state
+            .written_messages
+            .iter()
+            .any(|msg| msg.contains("\"subtype\":\"interrupt\""))
+    );
 }
 
 #[tokio::test]
@@ -180,4 +192,3 @@ async fn test_errors_when_not_connected() {
     let err = client.interrupt().await.expect_err("must fail");
     assert!(err.to_string().contains("Not connected"));
 }
-

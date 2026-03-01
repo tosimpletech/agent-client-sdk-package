@@ -56,11 +56,7 @@ pub struct ProcessError {
 }
 
 impl ProcessError {
-    pub fn new(
-        message: impl Into<String>,
-        exit_code: Option<i32>,
-        stderr: Option<String>,
-    ) -> Self {
+    pub fn new(message: impl Into<String>, exit_code: Option<i32>, stderr: Option<String>) -> Self {
         let base = message.into();
         let mut message = base.clone();
         if let Some(code) = exit_code {
@@ -137,4 +133,3 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
-

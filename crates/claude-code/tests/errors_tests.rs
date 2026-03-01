@@ -40,4 +40,3 @@ fn test_json_decode_error() {
     assert_eq!(error.line, "{invalid json}");
     assert!(error.to_string().contains("Failed to decode JSON"));
 }
-

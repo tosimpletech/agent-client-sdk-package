@@ -85,7 +85,10 @@ impl ClaudeSdkClient {
         let mut transport: Box<dyn Transport> = if let Some(custom) = self.custom_transport.take() {
             custom
         } else {
-            Box::new(SubprocessCliTransport::new(transport_prompt, configured_options.clone())?)
+            Box::new(SubprocessCliTransport::new(
+                transport_prompt,
+                configured_options.clone(),
+            )?)
         };
         transport.connect().await?;
 
@@ -111,7 +114,9 @@ impl ClaudeSdkClient {
 
     pub async fn query(&mut self, prompt: InputPrompt, session_id: &str) -> Result<()> {
         let query = self.query.as_mut().ok_or_else(|| {
-            Error::CLIConnection(CLIConnectionError::new("Not connected. Call connect() first."))
+            Error::CLIConnection(CLIConnectionError::new(
+                "Not connected. Call connect() first.",
+            ))
         })?;
 
         match prompt {
@@ -120,10 +125,13 @@ impl ClaudeSdkClient {
             }
             InputPrompt::Messages(messages) => {
                 for mut message in messages {
-                    if let Value::Object(ref mut obj) = message {
-                        if !obj.contains_key("session_id") {
-                            obj.insert("session_id".to_string(), Value::String(session_id.to_string()));
-                        }
+                    if let Value::Object(ref mut obj) = message
+                        && !obj.contains_key("session_id")
+                    {
+                        obj.insert(
+                            "session_id".to_string(),
+                            Value::String(session_id.to_string()),
+                        );
                     }
                     query.send_raw_message(message).await?;
                 }
@@ -135,7 +143,9 @@ impl ClaudeSdkClient {
 
     pub async fn receive_message(&mut self) -> Result<Option<Message>> {
         let query = self.query.as_mut().ok_or_else(|| {
-            Error::CLIConnection(CLIConnectionError::new("Not connected. Call connect() first."))
+            Error::CLIConnection(CLIConnectionError::new(
+                "Not connected. Call connect() first.",
+            ))
         })?;
         query.receive_next_message().await
     }
@@ -154,42 +164,54 @@ impl ClaudeSdkClient {
 
     pub async fn interrupt(&mut self) -> Result<()> {
         let query = self.query.as_mut().ok_or_else(|| {
-            Error::CLIConnection(CLIConnectionError::new("Not connected. Call connect() first."))
+            Error::CLIConnection(CLIConnectionError::new(
+                "Not connected. Call connect() first.",
+            ))
         })?;
         query.interrupt().await
     }
 
     pub async fn set_permission_mode(&mut self, mode: &str) -> Result<()> {
         let query = self.query.as_mut().ok_or_else(|| {
-            Error::CLIConnection(CLIConnectionError::new("Not connected. Call connect() first."))
+            Error::CLIConnection(CLIConnectionError::new(
+                "Not connected. Call connect() first.",
+            ))
         })?;
         query.set_permission_mode(mode).await
     }
 
     pub async fn set_model(&mut self, model: Option<&str>) -> Result<()> {
         let query = self.query.as_mut().ok_or_else(|| {
-            Error::CLIConnection(CLIConnectionError::new("Not connected. Call connect() first."))
+            Error::CLIConnection(CLIConnectionError::new(
+                "Not connected. Call connect() first.",
+            ))
         })?;
         query.set_model(model).await
     }
 
     pub async fn rewind_files(&mut self, user_message_id: &str) -> Result<()> {
         let query = self.query.as_mut().ok_or_else(|| {
-            Error::CLIConnection(CLIConnectionError::new("Not connected. Call connect() first."))
+            Error::CLIConnection(CLIConnectionError::new(
+                "Not connected. Call connect() first.",
+            ))
         })?;
         query.rewind_files(user_message_id).await
     }
 
     pub async fn get_mcp_status(&mut self) -> Result<Value> {
         let query = self.query.as_mut().ok_or_else(|| {
-            Error::CLIConnection(CLIConnectionError::new("Not connected. Call connect() first."))
+            Error::CLIConnection(CLIConnectionError::new(
+                "Not connected. Call connect() first.",
+            ))
         })?;
         query.get_mcp_status().await
     }
 
     pub fn get_server_info(&self) -> Result<Option<Value>> {
         let query = self.query.as_ref().ok_or_else(|| {
-            Error::CLIConnection(CLIConnectionError::new("Not connected. Call connect() first."))
+            Error::CLIConnection(CLIConnectionError::new(
+                "Not connected. Call connect() first.",
+            ))
         })?;
         Ok(query.initialization_result())
     }

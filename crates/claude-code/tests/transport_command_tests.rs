@@ -9,9 +9,10 @@ use claude_code_client_sdk::{
 use serde_json::Value;
 
 fn make_options() -> ClaudeAgentOptions {
-    let mut options = ClaudeAgentOptions::default();
-    options.cli_path = Some(PathBuf::from("/usr/bin/claude"));
-    options
+    ClaudeAgentOptions {
+        cli_path: Some(PathBuf::from("/usr/bin/claude")),
+        ..Default::default()
+    }
 }
 
 #[test]
@@ -30,7 +31,10 @@ fn test_build_command_basic() {
     assert!(cmd.contains(&"--input-format".to_string()));
     assert!(!cmd.contains(&"--print".to_string()));
     assert!(cmd.contains(&"--system-prompt".to_string()));
-    let idx = cmd.iter().position(|x| x == "--system-prompt").expect("idx");
+    let idx = cmd
+        .iter()
+        .position(|x| x == "--system-prompt")
+        .expect("idx");
     assert_eq!(cmd[idx + 1], "");
 }
 
@@ -145,7 +149,10 @@ fn test_build_command_with_sandbox_and_settings_merge() {
     let transport = SubprocessCliTransport::new(claude_code_client_sdk::Prompt::Messages, options)
         .expect("transport");
     let cmd = transport.build_command().expect("command");
-    let idx = cmd.iter().position(|x| x == "--settings").expect("settings");
+    let idx = cmd
+        .iter()
+        .position(|x| x == "--settings")
+        .expect("settings");
     let parsed: Value = serde_json::from_str(&cmd[idx + 1]).expect("json");
 
     assert_eq!(parsed["permissions"]["allow"][0], "Bash(ls:*)");
@@ -188,4 +195,3 @@ fn test_build_command_with_mcp_servers() {
     assert!(cmd.contains(&"--max-thinking-tokens".to_string()));
     assert!(cmd.contains(&"32000".to_string()));
 }
-

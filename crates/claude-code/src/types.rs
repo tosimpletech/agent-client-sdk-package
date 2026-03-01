@@ -205,34 +205,16 @@ pub struct ToolPermissionContext {
     pub suggestions: Vec<PermissionUpdate>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct PermissionResultAllow {
     pub updated_input: Option<Value>,
     pub updated_permissions: Option<Vec<PermissionUpdate>>,
 }
 
-impl Default for PermissionResultAllow {
-    fn default() -> Self {
-        Self {
-            updated_input: None,
-            updated_permissions: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct PermissionResultDeny {
     pub message: String,
     pub interrupt: bool,
-}
-
-impl Default for PermissionResultDeny {
-    fn default() -> Self {
-        Self {
-            message: String::new(),
-            interrupt: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -242,7 +224,11 @@ pub enum PermissionResult {
 }
 
 pub type CanUseToolCallback = Arc<
-    dyn Fn(String, Value, ToolPermissionContext) -> BoxFuture<'static, std::result::Result<PermissionResult, Error>>
+    dyn Fn(
+            String,
+            Value,
+            ToolPermissionContext,
+        ) -> BoxFuture<'static, std::result::Result<PermissionResult, Error>>
         + Send
         + Sync,
 >;
@@ -254,7 +240,11 @@ pub type HookInput = Value;
 pub type HookJSONOutput = Value;
 
 pub type HookCallback = Arc<
-    dyn Fn(HookInput, Option<String>, HookContext) -> BoxFuture<'static, std::result::Result<HookJSONOutput, Error>>
+    dyn Fn(
+            HookInput,
+            Option<String>,
+            HookContext,
+        ) -> BoxFuture<'static, std::result::Result<HookJSONOutput, Error>>
         + Send
         + Sync,
 >;
@@ -345,7 +335,10 @@ pub struct SdkPluginConfig {
 pub struct SandboxNetworkConfig {
     #[serde(rename = "allowUnixSockets", skip_serializing_if = "Option::is_none")]
     pub allow_unix_sockets: Option<Vec<String>>,
-    #[serde(rename = "allowAllUnixSockets", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "allowAllUnixSockets",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub allow_all_unix_sockets: Option<bool>,
     #[serde(rename = "allowLocalBinding", skip_serializing_if = "Option::is_none")]
     pub allow_local_binding: Option<bool>,
@@ -589,4 +582,3 @@ impl Default for ClaudeAgentOptions {
         }
     }
 }
-

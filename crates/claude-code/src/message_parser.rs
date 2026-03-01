@@ -130,7 +130,10 @@ pub fn parse_message(data: &Value) -> std::result::Result<Option<Message>, Messa
 
             Ok(Some(Message::User(UserMessage {
                 content: user_content,
-                uuid: obj.get("uuid").and_then(Value::as_str).map(ToString::to_string),
+                uuid: obj
+                    .get("uuid")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
                 parent_tool_use_id: obj
                     .get("parent_tool_use_id")
                     .and_then(Value::as_str)
@@ -290,4 +293,3 @@ pub fn parse_message(data: &Value) -> std::result::Result<Option<Message>, Messa
         _ => Ok(None),
     }
 }
-

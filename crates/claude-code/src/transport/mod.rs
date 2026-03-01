@@ -14,4 +14,3 @@ pub trait Transport: Send {
     async fn close(&mut self) -> Result<()>;
     fn is_ready(&self) -> bool;
 }
-

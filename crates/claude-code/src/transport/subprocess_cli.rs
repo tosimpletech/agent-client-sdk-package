@@ -14,8 +14,8 @@ use crate::errors::{
 };
 use crate::transport::Transport;
 use crate::types::{
-    ClaudeAgentOptions, McpServersOption, PermissionMode, SettingSource, SystemPrompt, ThinkingConfig,
-    ToolsOption,
+    ClaudeAgentOptions, McpServersOption, PermissionMode, SettingSource, SystemPrompt,
+    ThinkingConfig, ToolsOption,
 };
 
 pub const DEFAULT_MAX_BUFFER_SIZE: usize = 1024 * 1024;
@@ -40,7 +40,10 @@ impl JsonStreamBuffer {
         }
     }
 
-    pub fn push_chunk(&mut self, chunk: &str) -> std::result::Result<Vec<Value>, CLIJSONDecodeError> {
+    pub fn push_chunk(
+        &mut self,
+        chunk: &str,
+    ) -> std::result::Result<Vec<Value>, CLIJSONDecodeError> {
         let mut messages = Vec::new();
 
         for line in chunk.split('\n') {
@@ -58,7 +61,10 @@ impl JsonStreamBuffer {
                         "JSON message exceeded maximum buffer size of {} bytes",
                         self.max_buffer_size
                     ),
-                    format!("Buffer size {current_size} exceeds limit {}", self.max_buffer_size),
+                    format!(
+                        "Buffer size {current_size} exceeds limit {}",
+                        self.max_buffer_size
+                    ),
                 ));
             }
 
@@ -194,12 +200,11 @@ impl SubprocessCliTransport {
                 if let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(settings_str) {
                     settings_obj = obj;
                 }
-            } else if Path::new(settings_str).exists() {
-                if let Ok(content) = std::fs::read_to_string(settings_str) {
-                    if let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(&content) {
-                        settings_obj = obj;
-                    }
-                }
+            } else if Path::new(settings_str).exists()
+                && let Ok(content) = std::fs::read_to_string(settings_str)
+                && let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(&content)
+            {
+                settings_obj = obj;
             }
         }
 
@@ -407,13 +412,12 @@ impl SubprocessCliTransport {
             cmd.push(effort.clone());
         }
 
-        if let Some(Value::Object(output_format)) = &self.options.output_format {
-            if output_format.get("type").and_then(Value::as_str) == Some("json_schema") {
-                if let Some(schema) = output_format.get("schema") {
-                    cmd.push("--json-schema".to_string());
-                    cmd.push(schema.to_string());
-                }
-            }
+        if let Some(Value::Object(output_format)) = &self.options.output_format
+            && output_format.get("type").and_then(Value::as_str) == Some("json_schema")
+            && let Some(schema) = output_format.get("schema")
+        {
+            cmd.push("--json-schema".to_string());
+            cmd.push(schema.to_string());
         }
 
         cmd.push("--input-format".to_string());
@@ -430,14 +434,14 @@ impl Transport for SubprocessCliTransport {
             return Ok(());
         }
 
-        if let Some(cwd) = &self.cwd {
-            if !cwd.exists() {
-                return Err(CLIConnectionError::new(format!(
-                    "Working directory does not exist: {}",
-                    cwd.to_string_lossy()
-                ))
-                .into());
-            }
+        if let Some(cwd) = &self.cwd
+            && !cwd.exists()
+        {
+            return Err(CLIConnectionError::new(format!(
+                "Working directory does not exist: {}",
+                cwd.to_string_lossy()
+            ))
+            .into());
         }
 
         let cmd = self.build_command()?;
@@ -487,17 +491,19 @@ impl Transport for SubprocessCliTransport {
         let _guard = self.write_lock.lock().await;
 
         if !self.ready {
-            return Err(CLIConnectionError::new("ProcessTransport is not ready for writing").into());
+            return Err(
+                CLIConnectionError::new("ProcessTransport is not ready for writing").into(),
+            );
         }
 
-        if let Some(child) = &mut self.child {
-            if let Ok(Some(status)) = child.try_wait() {
-                return Err(CLIConnectionError::new(format!(
-                    "Cannot write to terminated process (exit code: {:?})",
-                    status.code()
-                ))
-                .into());
-            }
+        if let Some(child) = &mut self.child
+            && let Ok(Some(status)) = child.try_wait()
+        {
+            return Err(CLIConnectionError::new(format!(
+                "Cannot write to terminated process (exit code: {:?})",
+                status.code()
+            ))
+            .into());
         }
 
         let stdin = self.stdin.as_mut().ok_or_else(|| {
@@ -578,11 +584,11 @@ impl Transport for SubprocessCliTransport {
         self.ready = false;
         self.stdin.take();
         self.stdout.take();
-        if let Some(child) = &mut self.child {
-            if child.try_wait()?.is_none() {
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-            }
+        if let Some(child) = &mut self.child
+            && child.try_wait()?.is_none()
+        {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
         }
         self.child = None;
         Ok(())
@@ -592,4 +598,3 @@ impl Transport for SubprocessCliTransport {
         self.ready
     }
 }
-

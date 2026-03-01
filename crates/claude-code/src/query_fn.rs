@@ -13,4 +13,3 @@ pub async fn query(
     let client = InternalClient::new();
     client.process_query(prompt, options, transport).await
 }
-

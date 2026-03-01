@@ -36,7 +36,9 @@ fn test_assistant_message_with_thinking() {
         signature: "sig-123".to_string(),
     };
     let msg = AssistantMessage {
-        content: vec![claude_code_client_sdk::ContentBlock::Thinking(thinking_block.clone())],
+        content: vec![claude_code_client_sdk::ContentBlock::Thinking(
+            thinking_block.clone(),
+        )],
         model: "claude-opus-4-1-20250805".to_string(),
         parent_tool_use_id: None,
         error: None,
@@ -103,9 +105,14 @@ fn test_default_options() {
 
 #[test]
 fn test_options_permission_modes() {
-    let mut options = ClaudeAgentOptions::default();
-    options.permission_mode = Some(PermissionMode::BypassPermissions);
-    assert_eq!(options.permission_mode, Some(PermissionMode::BypassPermissions));
+    let mut options = ClaudeAgentOptions {
+        permission_mode: Some(PermissionMode::BypassPermissions),
+        ..Default::default()
+    };
+    assert_eq!(
+        options.permission_mode,
+        Some(PermissionMode::BypassPermissions)
+    );
 
     options.permission_mode = Some(PermissionMode::Plan);
     assert_eq!(options.permission_mode, Some(PermissionMode::Plan));
@@ -116,4 +123,3 @@ fn test_options_permission_modes() {
     options.permission_mode = Some(PermissionMode::AcceptEdits);
     assert_eq!(options.permission_mode, Some(PermissionMode::AcceptEdits));
 }
-

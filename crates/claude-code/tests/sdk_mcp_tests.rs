@@ -63,16 +63,20 @@ async fn test_tool_creation_and_call() {
 #[tokio::test]
 async fn test_tool_error_handling() {
     let fail_tool = tool("fail", "Always fails", json!({}), |_args| async move {
-        Err(claude_code_client_sdk::Error::Other("Expected error".to_string()))
+        Err(claude_code_client_sdk::Error::Other(
+            "Expected error".to_string(),
+        ))
     });
 
     let server = create_sdk_mcp_server("error-test", "1.0.0", vec![fail_tool]);
     let result = server.instance.call_tool_json("fail", json!({})).await;
     assert_eq!(result["is_error"], true);
-    assert!(result["content"][0]["text"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("Expected error"));
+    assert!(
+        result["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Expected error")
+    );
 }
 
 #[tokio::test]
@@ -112,7 +116,10 @@ async fn test_tool_annotations_in_list_and_jsonrpc() {
         by_name["read_only_tool"]["annotations"]["readOnlyHint"],
         true
     );
-    assert!(by_name["plain_tool"]["annotations"].is_null() || by_name["plain_tool"].get("annotations").is_none());
+    assert!(
+        by_name["plain_tool"]["annotations"].is_null()
+            || by_name["plain_tool"].get("annotations").is_none()
+    );
 
     let mut servers = HashMap::new();
     servers.insert("test".to_string(), server.instance.clone());

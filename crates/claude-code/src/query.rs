@@ -97,7 +97,8 @@ impl Query {
                 for callback in &matcher.hooks {
                     let callback_id = format!("hook_{}", self.next_callback_id);
                     self.next_callback_id += 1;
-                    self.hook_callbacks.insert(callback_id.clone(), callback.clone());
+                    self.hook_callbacks
+                        .insert(callback_id.clone(), callback.clone());
                     callback_ids.push(callback_id);
                 }
 
@@ -120,7 +121,10 @@ impl Query {
         }
 
         let mut request = Map::new();
-        request.insert("subtype".to_string(), Value::String("initialize".to_string()));
+        request.insert(
+            "subtype".to_string(),
+            Value::String("initialize".to_string()),
+        );
         request.insert(
             "hooks".to_string(),
             if hooks_config.is_empty() {
@@ -210,7 +214,10 @@ impl Query {
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .to_string();
-                let input = request_data.get("input").cloned().unwrap_or_else(|| json!({}));
+                let input = request_data
+                    .get("input")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
                 let suggestions = request_data
                     .get("permission_suggestions")
                     .and_then(Value::as_array)
@@ -258,10 +265,16 @@ impl Query {
                 let callback_id = request_data
                     .get("callback_id")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| Error::Other("Missing callback_id in hook_callback".to_string()))?;
-                let callback = self.hook_callbacks.get(callback_id).cloned().ok_or_else(|| {
-                    Error::Other(format!("No hook callback found for ID: {callback_id}"))
-                })?;
+                    .ok_or_else(|| {
+                        Error::Other("Missing callback_id in hook_callback".to_string())
+                    })?;
+                let callback = self
+                    .hook_callbacks
+                    .get(callback_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        Error::Other(format!("No hook callback found for ID: {callback_id}"))
+                    })?;
                 let input = request_data.get("input").cloned().unwrap_or(Value::Null);
                 let tool_use_id = request_data
                     .get("tool_use_id")
@@ -274,7 +287,9 @@ impl Query {
                 let server_name = request_data
                     .get("server_name")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| Error::Other("Missing server_name in mcp_message".to_string()))?;
+                    .ok_or_else(|| {
+                        Error::Other("Missing server_name in mcp_message".to_string())
+                    })?;
                 let message = request_data
                     .get("message")
                     .cloned()
@@ -288,7 +303,10 @@ impl Query {
         };
 
         match result {
-            Ok(payload) => self.send_control_response(&request_id, "success", payload).await,
+            Ok(payload) => {
+                self.send_control_response(&request_id, "success", payload)
+                    .await
+            }
             Err(err) => {
                 self.send_control_response(&request_id, "error", Value::String(err.to_string()))
                     .await
@@ -360,7 +378,10 @@ impl Query {
                     return Err(Error::Other(error.to_string()));
                 }
 
-                return Ok(response.get("response").cloned().unwrap_or_else(|| json!({})));
+                return Ok(response
+                    .get("response")
+                    .cloned()
+                    .unwrap_or_else(|| json!({})));
             }
 
             if msg_type == "control_request" {
@@ -384,7 +405,10 @@ impl Query {
             });
         };
 
-        let method = message.get("method").and_then(Value::as_str).unwrap_or_default();
+        let method = message
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let id = message.get("id").cloned().unwrap_or(Value::Null);
         let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
 

@@ -150,9 +150,10 @@ fn test_parse_unknown_message_type_returns_none() {
 fn test_parse_missing_fields_errors_contain_data() {
     let data = json!({"type": "assistant"});
     let error = parse_message(&data).expect_err("should fail");
-    assert!(error
-        .to_string()
-        .contains("Missing required field in assistant message"));
+    assert!(
+        error
+            .to_string()
+            .contains("Missing required field in assistant message")
+    );
     assert_eq!(error.data, Some(data));
 }
-

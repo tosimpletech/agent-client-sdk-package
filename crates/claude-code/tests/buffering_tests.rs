@@ -76,4 +76,3 @@ fn test_mixed_complete_and_split_json() {
     assert_eq!(results[1]["type"], "assistant");
     assert_eq!(results[2]["subtype"], "end");
 }
-

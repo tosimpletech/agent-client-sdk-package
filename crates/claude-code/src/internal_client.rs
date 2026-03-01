@@ -105,4 +105,3 @@ impl InternalClient {
         Ok(messages)
     }
 }
-
