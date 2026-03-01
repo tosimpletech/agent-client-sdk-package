@@ -1,3 +1,16 @@
+//! Core query/session management for Claude Code communication.
+//!
+//! This module provides the [`Query`] struct, which handles the low-level
+//! communication protocol with the Claude Code CLI process, including:
+//!
+//! - Session initialization and handshake
+//! - Control request/response protocol (permissions, hooks, MCP)
+//! - Message queuing and parsing
+//! - Lifecycle management (interrupt, model change, rewind)
+//!
+//! Most users should use [`ClaudeSdkClient`](crate::ClaudeSdkClient) or
+//! [`query()`](crate::query) instead of interacting with this module directly.
+
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -12,6 +25,10 @@ use crate::types::{
     ToolPermissionContext,
 };
 
+/// Converts hook callback output keys from Rust-safe names to CLI protocol names.
+///
+/// Specifically maps `async_` → `async` and `continue_` → `continue`, since
+/// those are reserved words in Rust.
 fn convert_hook_output_for_cli(output: Value) -> Value {
     let Some(obj) = output.as_object() else {
         return output;
@@ -34,6 +51,15 @@ fn convert_hook_output_for_cli(output: Value) -> Value {
     Value::Object(converted)
 }
 
+/// Low-level query session handler for Claude Code CLI communication.
+///
+/// Manages the bidirectional JSON stream protocol between the SDK and the CLI,
+/// handling control messages (permissions, hooks, MCP) transparently while
+/// exposing content messages to the caller.
+///
+/// This struct is used internally by [`ClaudeSdkClient`](crate::ClaudeSdkClient)
+/// and [`InternalClient`](crate::internal_client::InternalClient). Direct usage is
+/// possible but not recommended for most use cases.
 pub struct Query {
     transport: Box<dyn Transport>,
     is_streaming_mode: bool,
@@ -51,6 +77,17 @@ pub struct Query {
 }
 
 impl Query {
+    /// Creates a new `Query` bound to a transport.
+    ///
+    /// # Arguments
+    ///
+    /// * `transport` — The transport layer for CLI communication.
+    /// * `is_streaming_mode` — Whether to use the streaming protocol (always `true` currently).
+    /// * `can_use_tool` — Optional permission callback for tool approval.
+    /// * `hooks` — Optional hook matchers keyed by event name.
+    /// * `sdk_mcp_servers` — Optional in-process MCP servers.
+    /// * `agents` — Optional subagent definitions.
+    /// * `initialize_timeout` — Timeout for the initialization handshake.
     pub fn new(
         transport: Box<dyn Transport>,
         is_streaming_mode: bool,
@@ -77,10 +114,17 @@ impl Query {
         }
     }
 
+    /// Starts the query session (currently a no-op, reserved for future use).
     pub async fn start(&mut self) -> Result<()> {
         Ok(())
     }
 
+    /// Sends the initialization handshake to the CLI.
+    ///
+    /// Registers hook callbacks and agent definitions with the CLI process,
+    /// and waits for the initialization response.
+    ///
+    /// Returns the initialization response payload, or `None` if not in streaming mode.
     pub async fn initialize(&mut self) -> Result<Option<Value>> {
         if !self.is_streaming_mode {
             return Ok(None);
@@ -149,10 +193,14 @@ impl Query {
         Ok(Some(response))
     }
 
+    /// Returns the initialization result from the CLI handshake.
+    ///
+    /// Returns `None` if [`initialize()`](Self::initialize) has not been called yet.
     pub fn initialization_result(&self) -> Option<Value> {
         self.initialization_result.clone()
     }
 
+    /// Sends a control response back to the CLI for a pending request.
     async fn send_control_response(
         &mut self,
         request_id: &str,
@@ -186,6 +234,14 @@ impl Query {
         self.transport.write(&(response.to_string() + "\n")).await
     }
 
+    /// Handles an incoming control request from the CLI.
+    ///
+    /// Control requests include:
+    /// - `can_use_tool` — Tool permission approval via [`CanUseToolCallback`]
+    /// - `hook_callback` — Hook function invocation
+    /// - `mcp_message` — In-process MCP server message routing
+    ///
+    /// The response is automatically sent back to the CLI.
     pub async fn handle_control_request(&mut self, request: Value) -> Result<()> {
         let Some(request_obj) = request.as_object() else {
             return Err(Error::Other("Invalid control request format".to_string()));
@@ -314,6 +370,10 @@ impl Query {
         }
     }
 
+    /// Sends a control request to the CLI and waits for the matching response.
+    ///
+    /// While waiting, incoming control requests from the CLI are handled
+    /// automatically, and content messages are queued for later retrieval.
     async fn send_control_request(&mut self, request: Value, timeout: Duration) -> Result<Value> {
         if !self.is_streaming_mode {
             return Err(Error::Other(
@@ -393,6 +453,10 @@ impl Query {
         }
     }
 
+    /// Routes an MCP message to the appropriate in-process SDK MCP server.
+    ///
+    /// Handles the JSON-RPC protocol for `initialize`, `tools/list`, `tools/call`,
+    /// and `notifications/initialized` methods.
     pub async fn handle_sdk_mcp_request(&self, server_name: &str, message: &Value) -> Value {
         let Some(server) = self.sdk_mcp_servers.get(server_name) else {
             return json!({
@@ -463,6 +527,12 @@ impl Query {
         }
     }
 
+    /// Sends a user text message to the CLI.
+    ///
+    /// # Arguments
+    ///
+    /// * `prompt` — The text content of the user message.
+    /// * `session_id` — The session identifier.
     pub async fn send_user_message(&mut self, prompt: &str, session_id: &str) -> Result<()> {
         let message = json!({
             "type": "user",
@@ -473,10 +543,14 @@ impl Query {
         self.transport.write(&(message.to_string() + "\n")).await
     }
 
+    /// Sends a raw JSON message to the CLI without any transformation.
     pub async fn send_raw_message(&mut self, message: Value) -> Result<()> {
         self.transport.write(&(message.to_string() + "\n")).await
     }
 
+    /// Streams multiple messages to the CLI and closes the input stream.
+    ///
+    /// Used for batch-style interactions where all input is provided upfront.
     pub async fn stream_input(&mut self, messages: Vec<Value>) -> Result<()> {
         for message in messages {
             self.send_raw_message(message).await?;
@@ -484,10 +558,18 @@ impl Query {
         self.transport.end_input().await
     }
 
+    /// Closes the input stream without sending any messages.
     pub async fn end_input(&mut self) -> Result<()> {
         self.transport.end_input().await
     }
 
+    /// Receives the next content message from the CLI.
+    ///
+    /// Control messages (permission requests, hook callbacks, MCP messages)
+    /// are handled automatically and transparently. Only content messages
+    /// (user, assistant, system, result, stream_event) are returned.
+    ///
+    /// Returns `None` when the stream is exhausted (no more messages).
     pub async fn receive_next_message(&mut self) -> Result<Option<Message>> {
         loop {
             let raw = if let Some(message) = self.queued_messages.pop_front() {
@@ -516,17 +598,20 @@ impl Query {
         }
     }
 
+    /// Queries the status of connected MCP servers via the CLI.
     pub async fn get_mcp_status(&mut self) -> Result<Value> {
         self.send_control_request(json!({ "subtype": "mcp_status" }), Duration::from_secs(60))
             .await
     }
 
+    /// Sends an interrupt signal to the CLI to stop the current operation.
     pub async fn interrupt(&mut self) -> Result<()> {
         self.send_control_request(json!({ "subtype": "interrupt" }), Duration::from_secs(60))
             .await?;
         Ok(())
     }
 
+    /// Changes the permission mode via a control request.
     pub async fn set_permission_mode(&mut self, mode: &str) -> Result<()> {
         self.send_control_request(
             json!({ "subtype": "set_permission_mode", "mode": mode }),
@@ -536,6 +621,7 @@ impl Query {
         Ok(())
     }
 
+    /// Changes the model used by the CLI via a control request.
     pub async fn set_model(&mut self, model: Option<&str>) -> Result<()> {
         self.send_control_request(
             json!({ "subtype": "set_model", "model": model }),
@@ -545,6 +631,7 @@ impl Query {
         Ok(())
     }
 
+    /// Rewinds file changes to a specific user message checkpoint.
     pub async fn rewind_files(&mut self, user_message_id: &str) -> Result<()> {
         self.send_control_request(
             json!({ "subtype": "rewind_files", "user_message_id": user_message_id }),
@@ -554,6 +641,7 @@ impl Query {
         Ok(())
     }
 
+    /// Closes the transport and ends the query session.
     pub async fn close(&mut self) -> Result<()> {
         self.transport.close().await
     }

@@ -1,3 +1,11 @@
+//! Subprocess-based transport for the Claude Code CLI.
+//!
+//! This module provides [`SubprocessCliTransport`], which spawns the Claude Code CLI
+//! as a child process and communicates via stdin/stdout using newline-delimited JSON.
+//!
+//! It also provides [`JsonStreamBuffer`] for incrementally parsing JSON messages
+//! from a byte stream.
+
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -18,14 +26,30 @@ use crate::types::{
     ThinkingConfig, ToolsOption,
 };
 
+/// Default maximum buffer size for JSON stream parsing (1 MB).
 pub const DEFAULT_MAX_BUFFER_SIZE: usize = 1024 * 1024;
 
+/// Prompt type for the transport layer.
+///
+/// Determines whether the CLI is invoked with a text prompt on the command line
+/// or in streaming message mode (input via stdin).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Prompt {
+    /// A text prompt passed as a CLI argument.
     Text(String),
+    /// Streaming message mode — input is provided via stdin as JSON messages.
     Messages,
 }
 
+/// Incremental JSON stream parser for buffering and parsing newline-delimited JSON.
+///
+/// Accumulates input chunks and attempts to parse complete JSON values.
+/// Handles cases where JSON objects span multiple lines or chunks.
+///
+/// # Buffer overflow protection
+///
+/// If the buffer exceeds `max_buffer_size` bytes, a [`CLIJSONDecodeError`] is returned
+/// and the buffer is cleared.
 #[derive(Debug, Clone)]
 pub struct JsonStreamBuffer {
     buffer: String,
@@ -33,6 +57,7 @@ pub struct JsonStreamBuffer {
 }
 
 impl JsonStreamBuffer {
+    /// Creates a new `JsonStreamBuffer` with the given maximum buffer size.
     pub fn new(max_buffer_size: usize) -> Self {
         Self {
             buffer: String::new(),
@@ -40,6 +65,19 @@ impl JsonStreamBuffer {
         }
     }
 
+    /// Pushes a chunk of data into the buffer and returns any complete JSON values.
+    ///
+    /// The chunk is split by newlines, and each line is appended to the internal buffer.
+    /// After each line, the buffer is tested for valid JSON. If it parses successfully,
+    /// the value is collected and the buffer is cleared for the next message.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<Value>` of all complete JSON values parsed from this chunk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CLIJSONDecodeError`] if the buffer exceeds the maximum size.
     pub fn push_chunk(
         &mut self,
         chunk: &str,
@@ -83,9 +121,24 @@ impl JsonStreamBuffer {
     }
 }
 
+/// Transport implementation that communicates with the Claude Code CLI via a subprocess.
+///
+/// Spawns the `claude` CLI as a child process, passing configuration via command-line
+/// arguments and environment variables. Communication uses newline-delimited JSON
+/// over stdin (input) and stdout (output).
+///
+/// # CLI discovery
+///
+/// The CLI binary is located by:
+/// 1. Using `cli_path` from [`ClaudeAgentOptions`] if provided
+/// 2. Searching `PATH` for `claude`
+/// 3. Checking common installation locations (`~/.npm-global/bin/`, `/usr/local/bin/`, etc.)
 pub struct SubprocessCliTransport {
+    /// The prompt type for this transport session.
     pub prompt: Prompt,
+    /// The agent options used to configure the CLI.
     pub options: ClaudeAgentOptions,
+    /// The resolved path to the CLI executable.
     pub cli_path: String,
     cwd: Option<PathBuf>,
     child: Option<Child>,
@@ -98,6 +151,14 @@ pub struct SubprocessCliTransport {
 }
 
 impl SubprocessCliTransport {
+    /// Creates a new `SubprocessCliTransport` with the given prompt and options.
+    ///
+    /// Resolves the CLI path immediately but does not start the subprocess.
+    /// Call [`connect()`](Transport::connect) to spawn the process.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CLINotFoundError`] if the CLI executable cannot be located.
     pub fn new(prompt: Prompt, options: ClaudeAgentOptions) -> Result<Self> {
         let cli_path = match &options.cli_path {
             Some(path) => path.to_string_lossy().to_string(),
@@ -122,6 +183,7 @@ impl SubprocessCliTransport {
         })
     }
 
+    /// Locates the Claude Code CLI binary by searching PATH and common locations.
     fn find_cli() -> std::result::Result<String, CLINotFoundError> {
         if let Ok(path) = which::which("claude") {
             return Ok(path.to_string_lossy().to_string());
@@ -163,6 +225,7 @@ impl SubprocessCliTransport {
         ))
     }
 
+    /// Converts a `PermissionMode` enum variant to its CLI string representation.
     fn permission_mode_to_string(mode: &PermissionMode) -> &'static str {
         match mode {
             PermissionMode::Default => "default",
@@ -172,6 +235,7 @@ impl SubprocessCliTransport {
         }
     }
 
+    /// Converts a `SettingSource` enum variant to its CLI string representation.
     fn setting_source_to_string(source: &SettingSource) -> &'static str {
         match source {
             SettingSource::User => "user",
@@ -180,6 +244,7 @@ impl SubprocessCliTransport {
         }
     }
 
+    /// Builds the combined settings value from `options.settings` and `options.sandbox`.
     fn build_settings_value(&self) -> Option<String> {
         let has_settings = self.options.settings.is_some();
         let has_sandbox = self.options.sandbox.is_some();
@@ -218,6 +283,13 @@ impl SubprocessCliTransport {
         Some(Value::Object(settings_obj).to_string())
     }
 
+    /// Builds the complete command-line arguments for spawning the CLI process.
+    ///
+    /// Translates all [`ClaudeAgentOptions`] fields into their corresponding CLI flags.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<String>` where the first element is the CLI path and the rest are arguments.
     pub fn build_command(&self) -> Result<Vec<String>> {
         let mut cmd = vec![
             self.cli_path.clone(),
