@@ -1,6 +1,6 @@
 use claude_code::{
     AssistantMessage, ClaudeAgentOptions, PermissionMode, ResultMessage, TextBlock, ThinkingBlock,
-    ToolResultBlock, ToolUseBlock, UserContent, UserMessage,
+    ToolPermissionContext, ToolResultBlock, ToolUseBlock, UserContent, UserMessage,
 };
 use serde_json::json;
 
@@ -120,4 +120,32 @@ fn test_options_permission_modes() {
 
     options.permission_mode = Some(PermissionMode::AcceptEdits);
     assert_eq!(options.permission_mode, Some(PermissionMode::AcceptEdits));
+}
+
+#[test]
+fn test_tool_permission_context_with_blocked_path() {
+    let context = ToolPermissionContext {
+        suggestions: vec![],
+        blocked_path: Some("/tmp/blocked.txt".to_string()),
+        signal: None,
+    };
+
+    assert_eq!(context.blocked_path.as_deref(), Some("/tmp/blocked.txt"));
+    assert!(context.signal.is_none());
+
+    let serialized = serde_json::to_value(&context).expect("serialize context");
+    assert_eq!(serialized["blocked_path"], "/tmp/blocked.txt");
+    assert!(serialized.get("signal").is_none());
+}
+
+#[test]
+fn test_tool_permission_context_default() {
+    let context = ToolPermissionContext::default();
+
+    assert!(context.suggestions.is_empty());
+    assert!(context.blocked_path.is_none());
+    assert!(context.signal.is_none());
+
+    let serialized = serde_json::to_value(&context).expect("serialize context");
+    assert_eq!(serialized, json!({"suggestions": []}));
 }

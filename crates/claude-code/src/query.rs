@@ -786,7 +786,15 @@ async fn handle_can_use_tool_request(
         .into_iter()
         .filter_map(|value| serde_json::from_value(value).ok())
         .collect();
-    let context = ToolPermissionContext { suggestions };
+    let blocked_path = request_data
+        .get("blocked_path")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let context = ToolPermissionContext {
+        suggestions,
+        blocked_path,
+        signal: None,
+    };
 
     let callback_future = panic::catch_unwind(AssertUnwindSafe(|| {
         callback(tool_name, input.clone(), context)

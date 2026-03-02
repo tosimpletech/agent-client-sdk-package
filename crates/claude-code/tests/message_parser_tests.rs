@@ -147,6 +147,65 @@ fn test_parse_unknown_message_type_returns_none() {
 }
 
 #[test]
+fn test_rate_limit_event_returns_none() {
+    let data = json!({
+        "type": "rate_limit_event",
+        "rate_limit_info": {
+            "status": "allowed_warning",
+            "resetsAt": 1700000000,
+            "rateLimitType": "five_hour",
+            "utilization": 0.85,
+            "isUsingOverage": false
+        },
+        "uuid": "550e8400-e29b-41d4-a716-446655440000",
+        "session_id": "test-session-id"
+    });
+
+    let result = parse_message(&data).expect("parse ok");
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_rate_limit_event_rejected_returns_none() {
+    let data = json!({
+        "type": "rate_limit_event",
+        "rate_limit_info": {
+            "status": "rejected",
+            "resetsAt": 1700003600,
+            "rateLimitType": "seven_day",
+            "isUsingOverage": false,
+            "overageStatus": "rejected",
+            "overageDisabledReason": "out_of_credits"
+        },
+        "uuid": "660e8400-e29b-41d4-a716-446655440001",
+        "session_id": "test-session-id"
+    });
+
+    let result = parse_message(&data).expect("parse ok");
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_known_message_types_still_parsed() {
+    let data = json!({
+        "type": "assistant",
+        "message": {
+            "content": [{"type": "text", "text": "hello"}],
+            "model": "claude-sonnet-4-6-20250929"
+        }
+    });
+
+    let result = parse_message(&data).expect("parse ok");
+    match result {
+        Some(Message::Assistant(message)) => match &message.content[0] {
+            ContentBlock::Text(block) => assert_eq!(block.text, "hello"),
+            _ => panic!("expected text block"),
+        },
+        _ => panic!("expected assistant message"),
+    }
+}
+
+#[test]
 fn test_parse_missing_fields_errors_contain_data() {
     let data = json!({"type": "assistant"});
     let error = parse_message(&data).expect_err("should fail");

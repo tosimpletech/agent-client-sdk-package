@@ -312,9 +312,16 @@ impl PermissionUpdate {
 /// # Fields
 ///
 /// - `suggestions` — Permission update suggestions from the CLI for the user to consider.
-#[derive(Debug, Clone, Default)]
+/// - `blocked_path` — Optional path rejected by permission checks.
+/// - `signal` — Reserved placeholder for future abort signal support.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ToolPermissionContext {
+    #[serde(default)]
     pub suggestions: Vec<PermissionUpdate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<()>,
 }
 
 /// Result indicating the tool call should be allowed.
