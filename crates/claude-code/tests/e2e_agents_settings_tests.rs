@@ -82,10 +82,14 @@ fn extract_string_list_field<'a>(init_data: &'a Value, field_name: &str) -> Vec<
         .unwrap_or_default()
 }
 
-fn generate_large_agents(num_agents: usize, prompt_size_kb: usize) -> HashMap<String, AgentDefinition> {
+fn generate_large_agents(
+    num_agents: usize,
+    prompt_size_kb: usize,
+) -> HashMap<String, AgentDefinition> {
     let mut agents = HashMap::new();
     for i in 0..num_agents {
-        let prompt_content = format!("You are test agent #{i}. ") + &"x".repeat(prompt_size_kb * 1024);
+        let prompt_content =
+            format!("You are test agent #{i}. ") + &"x".repeat(prompt_size_kb * 1024);
         agents.insert(
             format!("large-agent-{i}"),
             AgentDefinition {
@@ -100,9 +104,7 @@ fn generate_large_agents(num_agents: usize, prompt_size_kb: usize) -> HashMap<St
 }
 
 fn serialized_agents_size(agents: &HashMap<String, AgentDefinition>) -> usize {
-    serde_json::to_vec(agents)
-        .expect("serialize agents")
-        .len()
+    serde_json::to_vec(agents).expect("serialize agents").len()
 }
 
 #[tokio::test]
@@ -238,7 +240,11 @@ You are a filesystem test agent.
     let init_data = extract_init_message_data(&messages);
     let init_agents = extract_string_list_field(init_data, "agents");
     assert!(init_agents.contains(&"fs-test-agent"));
-    assert!(messages.iter().any(|msg| matches!(msg, Message::Assistant(_))));
+    assert!(
+        messages
+            .iter()
+            .any(|msg| matches!(msg, Message::Assistant(_)))
+    );
     assert!(messages.iter().any(|msg| matches!(msg, Message::Result(_))));
 }
 
@@ -346,7 +352,10 @@ async fn test_e2e_large_agents_via_initialize() {
     let mut client = ClaudeSdkClient::new(Some(options), None);
     client.connect(None).await.expect("connect");
     client
-        .query(InputPrompt::Text("List available agents".to_string()), "default")
+        .query(
+            InputPrompt::Text("List available agents".to_string()),
+            "default",
+        )
         .await
         .expect("query");
 

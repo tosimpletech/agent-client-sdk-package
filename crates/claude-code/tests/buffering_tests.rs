@@ -96,14 +96,21 @@ fn test_large_minified_json() {
     })
     .to_string();
 
-    assert!(complete.len() > 100 * 1024, "payload must be at least 100KB");
+    assert!(
+        complete.len() > 100 * 1024,
+        "payload must be at least 100KB"
+    );
 
     let chunk_size = 64 * 1024;
     let mut messages = Vec::new();
     let mut start = 0;
     while start < complete.len() {
         let end = (start + chunk_size).min(complete.len());
-        messages.extend(parser.push_chunk(&complete[start..end]).expect("chunk parse"));
+        messages.extend(
+            parser
+                .push_chunk(&complete[start..end])
+                .expect("chunk parse"),
+        );
         start = end;
     }
 
@@ -123,14 +130,10 @@ fn test_buffer_size_exceeded() {
         "x".repeat(DEFAULT_MAX_BUFFER_SIZE + 1000)
     );
     let error = parser.push_chunk(&huge_incomplete).expect_err("must fail");
-    assert!(
-        error
-            .to_string()
-            .contains(&format!(
-                "maximum buffer size of {} bytes",
-                DEFAULT_MAX_BUFFER_SIZE
-            ))
-    );
+    assert!(error.to_string().contains(&format!(
+        "maximum buffer size of {} bytes",
+        DEFAULT_MAX_BUFFER_SIZE
+    )));
 }
 
 #[test]

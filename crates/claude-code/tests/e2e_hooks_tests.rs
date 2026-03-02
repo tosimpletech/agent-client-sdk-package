@@ -287,7 +287,9 @@ fn build_mock_hook_cli_path() -> PathBuf {
     {
         use std::os::unix::fs::PermissionsExt;
 
-        let mut perms = fs::metadata(&script_path).expect("script metadata").permissions();
+        let mut perms = fs::metadata(&script_path)
+            .expect("script metadata")
+            .permissions();
         perms.set_mode(0o755);
         fs::set_permissions(&script_path, perms).expect("set executable permission");
     }
@@ -640,7 +642,10 @@ async fn test_e2e_multiple_hooks() {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        pre_invocations.lock().expect("lock invocations").push(event);
+        pre_invocations
+            .lock()
+            .expect("lock invocations")
+            .push(event);
         async move {
             Ok(json!({
                 "hookSpecificOutput": {
@@ -659,7 +664,10 @@ async fn test_e2e_multiple_hooks() {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        post_invocations.lock().expect("lock invocations").push(event);
+        post_invocations
+            .lock()
+            .expect("lock invocations")
+            .push(event);
         async move {
             Ok(json!({
                 "hookSpecificOutput": {
@@ -713,9 +721,15 @@ async fn test_e2e_multiple_hooks() {
     assert!(invocations.iter().any(|event| event == "PostToolUse"));
     assert!(invocations.iter().any(|event| event == "Notification"));
 
-    let requests = summary["requests"].as_array().expect("summary requests array");
+    let requests = summary["requests"]
+        .as_array()
+        .expect("summary requests array");
     assert_eq!(requests.len(), 3);
-    assert!(requests.iter().any(|request| request["event"] == "PreToolUse"));
+    assert!(
+        requests
+            .iter()
+            .any(|request| request["event"] == "PreToolUse")
+    );
     assert!(
         requests
             .iter()
@@ -726,7 +740,9 @@ async fn test_e2e_multiple_hooks() {
             .iter()
             .any(|request| request["event"] == "Notification")
     );
-    assert!(requests
-        .iter()
-        .all(|request| request["response"]["subtype"] == "success"));
+    assert!(
+        requests
+            .iter()
+            .all(|request| request["response"]["subtype"] == "success")
+    );
 }
