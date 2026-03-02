@@ -238,6 +238,31 @@ impl ClaudeSdkClient {
         Ok(())
     }
 
+    /// Establishes a connection and sends initial prompt messages from a stream.
+    ///
+    /// This is a Rust-idiomatic equivalent of Python SDK `connect(AsyncIterable)`.
+    /// Unlike one-off query streaming helpers, this keeps stdin open so the session
+    /// can continue with follow-up [`query()`](Self::query) calls.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`connect()`](Self::connect), plus any write
+    /// errors while streaming the initial messages.
+    pub async fn connect_with_messages<S>(&mut self, prompt: S) -> Result<()>
+    where
+        S: Stream<Item = Value> + Unpin,
+    {
+        self.connect(None).await?;
+
+        let query = self.query.as_ref().ok_or_else(|| {
+            Error::CLIConnection(CLIConnectionError::new(
+                "Not connected. Call connect() first.",
+            ))
+        })?;
+
+        query.send_input_from_stream(prompt).await
+    }
+
     /// Sends a query within the current session.
     ///
     /// The session must be connected first via [`connect()`](Self::connect).
