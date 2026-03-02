@@ -5,27 +5,34 @@
 //!
 //! - Session initialization and handshake
 //! - Control request/response protocol (permissions, hooks, MCP)
-//! - Message queuing and parsing
+//! - Background message reading and routing via tokio tasks
 //! - Lifecycle management (interrupt, model change, rewind)
 //!
 //! Most users should use [`ClaudeSdkClient`](crate::ClaudeSdkClient) or
 //! [`query()`](crate::query) instead of interacting with this module directly.
 
-use std::collections::{HashMap, VecDeque};
-use std::time::{Duration, Instant};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 use serde_json::{Map, Value, json};
+use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::task::JoinHandle;
 use tracing::debug;
 
 use crate::errors::{Error, Result};
 use crate::message_parser::parse_message;
 use crate::sdk_mcp::McpSdkServer;
-use crate::transport::Transport;
+use crate::transport::{TransportCloseHandle, TransportReader, TransportWriter};
 use crate::types::{
     AgentDefinition, CanUseToolCallback, HookCallback, HookMatcher, Message, PermissionResult,
     ToolPermissionContext,
 };
+
+/// Channel buffer size for SDK messages (matches Python SDK's buffer=100).
+const MESSAGE_CHANNEL_BUFFER: usize = 100;
 
 /// Converts hook callback output keys from Rust-safe names to CLI protocol names.
 ///
@@ -53,55 +60,104 @@ fn convert_hook_output_for_cli(output: Value) -> Value {
     Value::Object(converted)
 }
 
-/// Low-level query session handler for Claude Code CLI communication.
+/// Tracks pending control request senders and early-arrival response buffers.
 ///
-/// Manages the bidirectional JSON stream protocol between the SDK and the CLI,
-/// handling control messages (permissions, hooks, MCP) transparently while
-/// exposing content messages to the caller.
-///
-/// This struct is used internally by [`ClaudeSdkClient`](crate::ClaudeSdkClient)
-/// and [`InternalClient`](crate::internal_client::InternalClient). Direct usage is
-/// possible but not recommended for most use cases.
-pub struct Query {
-    transport: Box<dyn Transport>,
-    is_streaming_mode: bool,
+/// Both maps are behind a single mutex to ensure atomicity: a response that
+/// arrives before the sender is registered gets buffered, and a later
+/// `send_control_request` drains the buffer under the same lock.
+struct PendingControlsState {
+    senders: HashMap<String, oneshot::Sender<Result<Value>>>,
+    buffered: HashMap<String, Result<Value>>,
+}
+
+/// Shared state accessible by both the background reader task and the main task.
+struct QuerySharedState {
     can_use_tool: Option<CanUseToolCallback>,
-    hooks: HashMap<String, Vec<HookMatcher>>,
-    sdk_mcp_servers: HashMap<String, std::sync::Arc<McpSdkServer>>,
-    agents: Option<HashMap<String, AgentDefinition>>,
-    request_counter: usize,
-    next_callback_id: usize,
-    hook_callbacks: HashMap<String, HookCallback>,
-    queued_messages: VecDeque<Value>,
-    initialized: bool,
-    initialization_result: Option<Value>,
-    initialize_timeout: Duration,
-    /// When true, stdin close is deferred until the first result message is received.
-    /// This is needed when hooks or SDK MCP servers are present, because the CLI may
-    /// send control requests that require writing responses back over stdin.
-    pending_stdin_close: bool,
-    /// Timeout for waiting for the first result before force-closing stdin.
+    hook_callbacks: Mutex<HashMap<String, HookCallback>>,
+    sdk_mcp_servers: HashMap<String, Arc<McpSdkServer>>,
+    /// Pending control request/response matching.
+    pending_controls: Mutex<PendingControlsState>,
+    /// Shared writer for responding to control requests and sending messages.
+    writer: Arc<Mutex<Box<dyn TransportWriter>>>,
+    /// Whether stdin close is deferred until first result.
+    pending_stdin_close: AtomicBool,
+    /// Timeout for deferred stdin close.
     stream_close_timeout: Duration,
 }
 
+/// Low-level query session handler for Claude Code CLI communication.
+///
+/// Manages the bidirectional JSON stream protocol between the SDK and the CLI.
+/// On [`start_with_state()`](Query::start_with_state), a background tokio task
+/// is spawned to continuously read messages from the transport and route them:
+///
+/// - **Control responses** are delivered to the waiting [`send_control_request()`](Query::send_control_request) caller via oneshot channels.
+/// - **Control requests** (permissions, hooks, MCP) are handled by the background task.
+/// - **SDK messages** (user, assistant, system, result) are parsed and delivered via an mpsc channel.
+///
+/// This architecture mirrors the Python SDK's task-group model and enables
+/// concurrent send and receive operations.
+pub struct Query {
+    /// Shared state for background task and main task.
+    state: Option<Arc<QuerySharedState>>,
+
+    /// Receiver end of the SDK message channel.
+    message_rx: Option<mpsc::Receiver<Result<Message>>>,
+
+    /// Handle for the background reader task.
+    reader_task: Option<JoinHandle<()>>,
+
+    /// Handle for closing the split transport.
+    close_handle: Option<Box<dyn TransportCloseHandle>>,
+
+    /// Monotonically increasing request ID counter.
+    request_counter: Arc<AtomicUsize>,
+
+    /// Whether the query is in streaming mode.
+    is_streaming_mode: bool,
+
+    /// Agent definitions to register during initialization.
+    agents: Option<HashMap<String, AgentDefinition>>,
+
+    /// Whether initialization has completed.
+    initialized: bool,
+
+    /// The initialization response from the CLI.
+    initialization_result: Option<Value>,
+
+    /// Timeout for the initialization handshake.
+    initialize_timeout: Duration,
+
+    /// Whether hooks or SDK MCP servers are present (for deferred stdin close).
+    has_hooks_or_mcp: bool,
+}
+
 impl Query {
-    /// Creates a new `Query` bound to a transport.
+    /// Creates a new `Query` and starts the background reader task.
+    ///
+    /// This is the primary constructor. It splits the given reader and writer,
+    /// registers callbacks, and spawns the background task.
     ///
     /// # Arguments
     ///
-    /// * `transport` — The transport layer for CLI communication.
-    /// * `is_streaming_mode` — Whether to use the streaming protocol (always `true` currently).
+    /// * `reader` — The transport reader half.
+    /// * `writer` — The transport writer half (wrapped in `Arc<Mutex<>>` for sharing).
+    /// * `close_handle` — Handle for closing the transport.
+    /// * `is_streaming_mode` — Whether to use the streaming protocol.
     /// * `can_use_tool` — Optional permission callback for tool approval.
-    /// * `hooks` — Optional hook matchers keyed by event name.
-    /// * `sdk_mcp_servers` — Optional in-process MCP servers.
+    /// * `hook_callbacks` — Hook callbacks keyed by callback ID.
+    /// * `sdk_mcp_servers` — In-process MCP servers.
     /// * `agents` — Optional subagent definitions.
     /// * `initialize_timeout` — Timeout for the initialization handshake.
-    pub fn new(
-        transport: Box<dyn Transport>,
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn start(
+        reader: Box<dyn TransportReader>,
+        writer: Box<dyn TransportWriter>,
+        close_handle: Box<dyn TransportCloseHandle>,
         is_streaming_mode: bool,
         can_use_tool: Option<CanUseToolCallback>,
-        hooks: Option<HashMap<String, Vec<HookMatcher>>>,
-        sdk_mcp_servers: Option<HashMap<String, std::sync::Arc<McpSdkServer>>>,
+        hook_callbacks: HashMap<String, HookCallback>,
+        sdk_mcp_servers: HashMap<String, Arc<McpSdkServer>>,
         agents: Option<HashMap<String, AgentDefinition>>,
         initialize_timeout: Duration,
     ) -> Self {
@@ -112,28 +168,42 @@ impl Query {
         let stream_close_timeout =
             Duration::from_millis(stream_close_timeout_ms).max(Duration::from_secs(60));
 
-        Self {
-            transport,
-            is_streaming_mode,
+        let has_hooks_or_mcp = !hook_callbacks.is_empty() || !sdk_mcp_servers.is_empty();
+        let writer = Arc::new(Mutex::new(writer));
+
+        let state = Arc::new(QuerySharedState {
             can_use_tool,
-            hooks: hooks.unwrap_or_default(),
-            sdk_mcp_servers: sdk_mcp_servers.unwrap_or_default(),
+            hook_callbacks: Mutex::new(hook_callbacks),
+            sdk_mcp_servers,
+            pending_controls: Mutex::new(PendingControlsState {
+                senders: HashMap::new(),
+                buffered: HashMap::new(),
+            }),
+            writer: writer.clone(),
+            pending_stdin_close: AtomicBool::new(false),
+            stream_close_timeout,
+        });
+
+        let (message_tx, message_rx) = mpsc::channel(MESSAGE_CHANNEL_BUFFER);
+
+        let reader_state = state.clone();
+        let reader_task = tokio::spawn(async move {
+            background_reader_task(reader, reader_state, message_tx).await;
+        });
+
+        Self {
+            state: Some(state),
+            message_rx: Some(message_rx),
+            reader_task: Some(reader_task),
+            close_handle: Some(close_handle),
+            request_counter: Arc::new(AtomicUsize::new(0)),
+            is_streaming_mode,
             agents,
-            request_counter: 0,
-            next_callback_id: 0,
-            hook_callbacks: HashMap::new(),
-            queued_messages: VecDeque::new(),
             initialized: false,
             initialization_result: None,
             initialize_timeout,
-            pending_stdin_close: false,
-            stream_close_timeout,
+            has_hooks_or_mcp,
         }
-    }
-
-    /// Starts the query session (currently a no-op, reserved for future use).
-    pub async fn start(&mut self) -> Result<()> {
-        Ok(())
     }
 
     /// Sends the initialization handshake to the CLI.
@@ -142,43 +212,9 @@ impl Query {
     /// and waits for the initialization response.
     ///
     /// Returns the initialization response payload, or `None` if not in streaming mode.
-    pub async fn initialize(&mut self) -> Result<Option<Value>> {
+    pub async fn initialize(&mut self, hooks_config: Map<String, Value>) -> Result<Option<Value>> {
         if !self.is_streaming_mode {
             return Ok(None);
-        }
-
-        let mut hooks_config = Map::new();
-        for (event, matchers) in &self.hooks {
-            if matchers.is_empty() {
-                continue;
-            }
-            let mut event_matchers = Vec::new();
-            for matcher in matchers {
-                let mut callback_ids = Vec::new();
-                for callback in &matcher.hooks {
-                    let callback_id = format!("hook_{}", self.next_callback_id);
-                    self.next_callback_id += 1;
-                    self.hook_callbacks
-                        .insert(callback_id.clone(), callback.clone());
-                    callback_ids.push(callback_id);
-                }
-
-                let mut matcher_obj = Map::new();
-                matcher_obj.insert(
-                    "matcher".to_string(),
-                    matcher
-                        .matcher
-                        .as_ref()
-                        .map(|m| Value::String(m.clone()))
-                        .unwrap_or(Value::Null),
-                );
-                matcher_obj.insert("hookCallbackIds".to_string(), json!(callback_ids));
-                if let Some(timeout) = matcher.timeout {
-                    matcher_obj.insert("timeout".to_string(), json!(timeout));
-                }
-                event_matchers.push(Value::Object(matcher_obj));
-            }
-            hooks_config.insert(event.clone(), Value::Array(event_matchers));
         }
 
         let mut request = Map::new();
@@ -217,376 +253,105 @@ impl Query {
         self.initialization_result.clone()
     }
 
-    /// Sends a control response back to the CLI for a pending request.
-    async fn send_control_response(
-        &mut self,
-        request_id: &str,
-        subtype: &str,
-        payload: Value,
-    ) -> Result<()> {
-        let response = match subtype {
-            "success" => json!({
-                "type": "control_response",
-                "response": {
-                    "subtype": "success",
-                    "request_id": request_id,
-                    "response": payload
-                }
-            }),
-            "error" => json!({
-                "type": "control_response",
-                "response": {
-                    "subtype": "error",
-                    "request_id": request_id,
-                    "error": payload.as_str().unwrap_or("Unknown error")
-                }
-            }),
-            _ => {
-                return Err(Error::Other(format!(
-                    "Unsupported control response subtype: {subtype}"
-                )));
-            }
-        };
-
-        self.transport.write(&(response.to_string() + "\n")).await
-    }
-
-    /// Handles an incoming control request from the CLI.
-    ///
-    /// Control requests include:
-    /// - `can_use_tool` — Tool permission approval via [`CanUseToolCallback`]
-    /// - `hook_callback` — Hook function invocation
-    /// - `mcp_message` — In-process MCP server message routing
-    ///
-    /// The response is automatically sent back to the CLI.
-    pub async fn handle_control_request(&mut self, request: Value) -> Result<()> {
-        let Some(request_obj) = request.as_object() else {
-            return Err(Error::Other("Invalid control request format".to_string()));
-        };
-        let request_id = request_obj
-            .get("request_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| Error::Other("Missing request_id in control request".to_string()))?
-            .to_string();
-        let request_data = request_obj
-            .get("request")
-            .and_then(Value::as_object)
-            .ok_or_else(|| Error::Other("Missing request payload".to_string()))?;
-        let subtype = request_data
-            .get("subtype")
-            .and_then(Value::as_str)
-            .ok_or_else(|| Error::Other("Missing request subtype".to_string()))?;
-
-        let result: Result<Value> = match subtype {
-            "can_use_tool" => {
-                let callback = self.can_use_tool.clone().ok_or_else(|| {
-                    Error::Other("canUseTool callback is not provided".to_string())
-                })?;
-                let tool_name = request_data
-                    .get("tool_name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                let input = request_data
-                    .get("input")
-                    .cloned()
-                    .unwrap_or_else(|| json!({}));
-                let suggestions = request_data
-                    .get("permission_suggestions")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|value| serde_json::from_value(value).ok())
-                    .collect();
-                let context = ToolPermissionContext { suggestions };
-
-                let callback_result = callback(tool_name, input.clone(), context).await?;
-                let output = match callback_result {
-                    PermissionResult::Allow(allow) => {
-                        let mut obj = Map::new();
-                        obj.insert("behavior".to_string(), Value::String("allow".to_string()));
-                        obj.insert(
-                            "updatedInput".to_string(),
-                            allow.updated_input.unwrap_or(input),
-                        );
-                        if let Some(updated_permissions) = allow.updated_permissions {
-                            let permissions_json: Vec<Value> = updated_permissions
-                                .into_iter()
-                                .map(|permission| permission.to_cli_dict())
-                                .collect();
-                            obj.insert(
-                                "updatedPermissions".to_string(),
-                                Value::Array(permissions_json),
-                            );
-                        }
-                        Value::Object(obj)
-                    }
-                    PermissionResult::Deny(deny) => {
-                        let mut obj = Map::new();
-                        obj.insert("behavior".to_string(), Value::String("deny".to_string()));
-                        obj.insert("message".to_string(), Value::String(deny.message));
-                        if deny.interrupt {
-                            obj.insert("interrupt".to_string(), Value::Bool(true));
-                        }
-                        Value::Object(obj)
-                    }
-                };
-                Ok(output)
-            }
-            "hook_callback" => {
-                let callback_id = request_data
-                    .get("callback_id")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        Error::Other("Missing callback_id in hook_callback".to_string())
-                    })?;
-                let callback = self
-                    .hook_callbacks
-                    .get(callback_id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        Error::Other(format!("No hook callback found for ID: {callback_id}"))
-                    })?;
-                let input = request_data.get("input").cloned().unwrap_or(Value::Null);
-                let tool_use_id = request_data
-                    .get("tool_use_id")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string);
-                let output = callback(input, tool_use_id, Default::default()).await?;
-                Ok(convert_hook_output_for_cli(output))
-            }
-            "mcp_message" => {
-                let server_name = request_data
-                    .get("server_name")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        Error::Other("Missing server_name in mcp_message".to_string())
-                    })?;
-                let message = request_data
-                    .get("message")
-                    .cloned()
-                    .ok_or_else(|| Error::Other("Missing message in mcp_message".to_string()))?;
-                let response = self.handle_sdk_mcp_request(server_name, &message).await;
-                Ok(json!({ "mcp_response": response }))
-            }
-            _ => Err(Error::Other(format!(
-                "Unsupported control request subtype: {subtype}"
-            ))),
-        };
-
-        match result {
-            Ok(payload) => {
-                self.send_control_response(&request_id, "success", payload)
-                    .await
-            }
-            Err(err) => {
-                self.send_control_response(&request_id, "error", Value::String(err.to_string()))
-                    .await
-            }
-        }
-    }
-
     /// Sends a control request to the CLI and waits for the matching response.
     ///
-    /// While waiting, incoming control requests from the CLI are handled
-    /// automatically, and content messages are queued for later retrieval.
-    ///
-    /// Each individual read from the transport is wrapped in a timeout, so the
-    /// method cannot hang indefinitely even if the CLI stops producing output.
-    async fn send_control_request(&mut self, request: Value, timeout: Duration) -> Result<Value> {
+    /// The request is written via the shared writer. The background reader task
+    /// delivers the matching control response via a oneshot channel.
+    async fn send_control_request(&self, request: Value, timeout: Duration) -> Result<Value> {
         if !self.is_streaming_mode {
             return Err(Error::Other(
                 "Control requests require streaming mode".to_string(),
             ));
         }
 
-        self.request_counter += 1;
-        let request_id = format!("req_{}", self.request_counter);
+        let state = self.state.as_ref().ok_or_else(|| {
+            Error::Other("Query not started or already closed.".to_string())
+        })?;
 
+        let request_id = format!(
+            "req_{}",
+            self.request_counter.fetch_add(1, Ordering::SeqCst) + 1
+        );
+
+        // Write the control request first (so it's always observable).
         let control_request = json!({
             "type": "control_request",
             "request_id": request_id,
             "request": request,
         });
-        self.transport
+        state
+            .writer
+            .lock()
+            .await
             .write(&(control_request.to_string() + "\n"))
             .await?;
 
-        let deadline = Instant::now() + timeout;
-        loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
+        // Register a oneshot channel for the response, checking the buffer first.
+        // Both operations are under a single lock to avoid a race where a response
+        // arrives between checking the buffer and registering the sender.
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut controls = state.pending_controls.lock().await;
+            if let Some(result) = controls.buffered.remove(&request_id) {
+                return result;
+            }
+            controls.senders.insert(request_id.clone(), tx);
+        }
+
+        // Wait for the response with timeout.
+        let result = tokio::time::timeout(timeout, rx).await;
+        match result {
+            Ok(Ok(value)) => value,
+            Ok(Err(_)) => {
+                // Channel closed — background task died
+                Err(Error::Other(
+                    "Background reader task terminated while waiting for control response"
+                        .to_string(),
+                ))
+            }
+            Err(_) => {
+                // Timeout
                 let subtype = request
                     .get("subtype")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                return Err(Error::Other(format!("Control request timeout: {subtype}")));
+                state.pending_controls.lock().await.senders.remove(&request_id);
+                Err(Error::Other(format!("Control request timeout: {subtype}")))
             }
-
-            let read_result =
-                tokio::time::timeout(remaining, self.transport.read_next_message()).await;
-            let message = match read_result {
-                Ok(Ok(Some(msg))) => msg,
-                Ok(Ok(None)) => {
-                    return Err(Error::Other(
-                        "Transport closed while waiting for control response".to_string(),
-                    ));
-                }
-                Ok(Err(e)) => return Err(e),
-                Err(_) => {
-                    let subtype = request
-                        .get("subtype")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown");
-                    return Err(Error::Other(format!("Control request timeout: {subtype}")));
-                }
-            };
-
-            let msg_type = message
-                .get("type")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-
-            if msg_type == "control_response" {
-                let Some(response) = message.get("response").and_then(Value::as_object) else {
-                    continue;
-                };
-                let response_request_id = response
-                    .get("request_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if response_request_id != request_id {
-                    continue;
-                }
-
-                let subtype = response
-                    .get("subtype")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if subtype == "error" {
-                    let error = response
-                        .get("error")
-                        .and_then(Value::as_str)
-                        .unwrap_or("Unknown error");
-                    return Err(Error::Other(error.to_string()));
-                }
-
-                return Ok(response
-                    .get("response")
-                    .cloned()
-                    .unwrap_or_else(|| json!({})));
-            }
-
-            if msg_type == "control_request" {
-                self.handle_control_request(message).await?;
-                continue;
-            }
-
-            self.queued_messages.push_back(message);
-        }
-    }
-
-    /// Routes an MCP message to the appropriate in-process SDK MCP server.
-    ///
-    /// Handles the JSON-RPC protocol for `initialize`, `tools/list`, `tools/call`,
-    /// and `notifications/initialized` methods.
-    pub async fn handle_sdk_mcp_request(&self, server_name: &str, message: &Value) -> Value {
-        let Some(server) = self.sdk_mcp_servers.get(server_name) else {
-            return json!({
-                "jsonrpc": "2.0",
-                "id": message.get("id").cloned().unwrap_or(Value::Null),
-                "error": {
-                    "code": -32601,
-                    "message": format!("Server '{server_name}' not found")
-                }
-            });
-        };
-
-        let method = message
-            .get("method")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let id = message.get("id").cloned().unwrap_or(Value::Null);
-        let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
-
-        match method {
-            "initialize" => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {
-                        "name": server.name,
-                        "version": server.version
-                    }
-                }
-            }),
-            "tools/list" => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {
-                    "tools": server.list_tools_json()
-                }
-            }),
-            "tools/call" => {
-                let tool_name = params
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                let arguments = params
-                    .get("arguments")
-                    .cloned()
-                    .unwrap_or_else(|| json!({}));
-                let result = server.call_tool_json(tool_name, arguments).await;
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": result
-                })
-            }
-            "notifications/initialized" => json!({
-                "jsonrpc": "2.0",
-                "result": {}
-            }),
-            _ => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": {
-                    "code": -32601,
-                    "message": format!("Method '{method}' not found")
-                }
-            }),
         }
     }
 
     /// Sends a user text message to the CLI.
-    ///
-    /// # Arguments
-    ///
-    /// * `prompt` — The text content of the user message.
-    /// * `session_id` — The session identifier.
-    pub async fn send_user_message(&mut self, prompt: &str, session_id: &str) -> Result<()> {
+    pub async fn send_user_message(&self, prompt: &str, session_id: &str) -> Result<()> {
         let message = json!({
             "type": "user",
             "message": {"role": "user", "content": prompt},
             "parent_tool_use_id": Value::Null,
             "session_id": session_id
         });
-        self.transport.write(&(message.to_string() + "\n")).await
+        self.write_message(&message).await
     }
 
     /// Sends a raw JSON message to the CLI without any transformation.
-    pub async fn send_raw_message(&mut self, message: Value) -> Result<()> {
-        self.transport.write(&(message.to_string() + "\n")).await
+    pub async fn send_raw_message(&self, message: Value) -> Result<()> {
+        self.write_message(&message).await
+    }
+
+    /// Writes a JSON message to the shared writer.
+    async fn write_message(&self, message: &Value) -> Result<()> {
+        let state = self.state.as_ref().ok_or_else(|| {
+            Error::Other("Query not started or already closed.".to_string())
+        })?;
+        state
+            .writer
+            .lock()
+            .await
+            .write(&(message.to_string() + "\n"))
+            .await
     }
 
     /// Sends multiple input messages to the CLI without closing stdin.
-    ///
-    /// This is used by session-based client flows where additional turns
-    /// will be sent later on the same connection.
-    pub async fn send_input_messages(&mut self, messages: Vec<Value>) -> Result<()> {
+    pub async fn send_input_messages(&self, messages: Vec<Value>) -> Result<()> {
         for message in messages {
             self.send_raw_message(message).await?;
         }
@@ -594,10 +359,7 @@ impl Query {
     }
 
     /// Sends streamed input messages to the CLI without closing stdin.
-    ///
-    /// This is used by session-based client flows where callers stream input
-    /// incrementally but need to keep the session writable for future turns.
-    pub async fn send_input_from_stream<S>(&mut self, mut messages: S) -> Result<()>
+    pub async fn send_input_from_stream<S>(&self, mut messages: S) -> Result<()>
     where
         S: Stream<Item = Value> + Unpin,
     {
@@ -609,22 +371,15 @@ impl Query {
 
     /// Streams multiple messages to the CLI and closes the input stream.
     ///
-    /// Used for batch-style interactions where all input is provided upfront.
-    ///
     /// If SDK MCP servers or hooks are present, stdin close is deferred until
-    /// the first result message is received (or a timeout expires). This allows
-    /// the CLI to send control requests (hook callbacks, MCP messages) that
-    /// require responses to be written back over stdin.
-    pub async fn stream_input(&mut self, messages: Vec<Value>) -> Result<()> {
+    /// the first result message is received (or a timeout expires).
+    pub async fn stream_input(&self, messages: Vec<Value>) -> Result<()> {
         self.send_input_messages(messages).await?;
         self.finalize_stream_input().await
     }
 
     /// Streams messages from an async stream source and closes the input stream.
-    ///
-    /// This is a Rust-idiomatic equivalent of Python's `AsyncIterable` prompt mode.
-    /// Messages are written as they arrive from the stream.
-    pub async fn stream_input_from_stream<S>(&mut self, mut messages: S) -> Result<()>
+    pub async fn stream_input_from_stream<S>(&self, mut messages: S) -> Result<()>
     where
         S: Stream<Item = Value> + Unpin,
     {
@@ -632,121 +387,64 @@ impl Query {
         self.finalize_stream_input().await
     }
 
-    async fn finalize_stream_input(&mut self) -> Result<()> {
-        let has_hooks = !self.hooks.is_empty();
-        let has_sdk_mcp = !self.sdk_mcp_servers.is_empty();
+    async fn finalize_stream_input(&self) -> Result<()> {
+        let state = self.state.as_ref().ok_or_else(|| {
+            Error::Other("Query not started or already closed.".to_string())
+        })?;
 
-        if has_sdk_mcp || has_hooks {
+        if self.has_hooks_or_mcp {
             debug!(
-                sdk_mcp_servers = self.sdk_mcp_servers.len(),
-                has_hooks, "Deferring stdin close until first result"
+                has_hooks_or_mcp = self.has_hooks_or_mcp,
+                "Deferring stdin close until first result"
             );
-            self.pending_stdin_close = true;
+            state.pending_stdin_close.store(true, Ordering::SeqCst);
         } else {
-            self.transport.end_input().await?;
+            state.writer.lock().await.end_input().await?;
         }
         Ok(())
     }
 
     /// Closes the input stream without sending any messages.
-    pub async fn end_input(&mut self) -> Result<()> {
-        self.transport.end_input().await
+    pub async fn end_input(&self) -> Result<()> {
+        let state = self.state.as_ref().ok_or_else(|| {
+            Error::Other("Query not started or already closed.".to_string())
+        })?;
+        state.writer.lock().await.end_input().await
     }
 
     /// Receives the next content message from the CLI.
     ///
-    /// Control messages (permission requests, hook callbacks, MCP messages)
-    /// are handled automatically and transparently. Only content messages
-    /// (user, assistant, system, result, stream_event) are returned.
-    ///
-    /// If stdin close was deferred (due to hooks/SDK MCP), the input stream
-    /// is closed when the first result message is received or on timeout.
+    /// Messages are delivered by the background reader task via an mpsc channel.
+    /// Control messages are handled transparently by the background task.
     ///
     /// Returns `None` when the stream is exhausted (no more messages).
     pub async fn receive_next_message(&mut self) -> Result<Option<Message>> {
-        let deadline = if self.pending_stdin_close {
-            Some(Instant::now() + self.stream_close_timeout)
-        } else {
-            None
-        };
+        let rx = self.message_rx.as_mut().ok_or_else(|| {
+            Error::Other("Query not started or already closed.".to_string())
+        })?;
 
-        loop {
-            let raw = if let Some(message) = self.queued_messages.pop_front() {
-                Some(message)
-            } else if let Some(deadline) = deadline {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining.is_zero() {
-                    // Timeout waiting for result — close stdin now
-                    debug!("Timed out waiting for first result, closing input stream");
-                    self.try_close_deferred_stdin().await;
-                    self.transport.read_next_message().await?
-                } else {
-                    match tokio::time::timeout(remaining, self.transport.read_next_message()).await
-                    {
-                        Ok(result) => result?,
-                        Err(_) => {
-                            debug!("Timed out waiting for first result, closing input stream");
-                            self.try_close_deferred_stdin().await;
-                            continue;
-                        }
-                    }
-                }
-            } else {
-                self.transport.read_next_message().await?
-            };
-
-            let Some(raw) = raw else {
-                // Stream ended — ensure stdin is closed
-                self.try_close_deferred_stdin().await;
-                return Ok(None);
-            };
-
-            let msg_type = raw.get("type").and_then(Value::as_str).unwrap_or_default();
-            if msg_type == "control_request" {
-                self.handle_control_request(raw).await?;
-                continue;
-            }
-            if msg_type == "control_response" || msg_type == "control_cancel_request" {
-                continue;
-            }
-
-            let parsed = parse_message(&raw)?;
-            if let Some(ref msg) = parsed {
-                // Close stdin when the first result message arrives
-                if matches!(msg, Message::Result(_)) && self.pending_stdin_close {
-                    debug!("Received first result, closing input stream");
-                    self.try_close_deferred_stdin().await;
-                }
-                return Ok(parsed);
-            }
-        }
-    }
-
-    /// Closes stdin if a deferred close is pending; resets the flag.
-    async fn try_close_deferred_stdin(&mut self) {
-        if self.pending_stdin_close {
-            self.pending_stdin_close = false;
-            if let Err(e) = self.transport.end_input().await {
-                debug!("Error closing deferred stdin: {e}");
-            }
+        match rx.recv().await {
+            Some(Ok(message)) => Ok(Some(message)),
+            Some(Err(err)) => Err(err),
+            None => Ok(None),
         }
     }
 
     /// Queries the status of connected MCP servers via the CLI.
-    pub async fn get_mcp_status(&mut self) -> Result<Value> {
+    pub async fn get_mcp_status(&self) -> Result<Value> {
         self.send_control_request(json!({ "subtype": "mcp_status" }), Duration::from_secs(60))
             .await
     }
 
     /// Sends an interrupt signal to the CLI to stop the current operation.
-    pub async fn interrupt(&mut self) -> Result<()> {
+    pub async fn interrupt(&self) -> Result<()> {
         self.send_control_request(json!({ "subtype": "interrupt" }), Duration::from_secs(60))
             .await?;
         Ok(())
     }
 
     /// Changes the permission mode via a control request.
-    pub async fn set_permission_mode(&mut self, mode: &str) -> Result<()> {
+    pub async fn set_permission_mode(&self, mode: &str) -> Result<()> {
         self.send_control_request(
             json!({ "subtype": "set_permission_mode", "mode": mode }),
             Duration::from_secs(60),
@@ -756,7 +454,7 @@ impl Query {
     }
 
     /// Changes the model used by the CLI via a control request.
-    pub async fn set_model(&mut self, model: Option<&str>) -> Result<()> {
+    pub async fn set_model(&self, model: Option<&str>) -> Result<()> {
         self.send_control_request(
             json!({ "subtype": "set_model", "model": model }),
             Duration::from_secs(60),
@@ -766,7 +464,7 @@ impl Query {
     }
 
     /// Rewinds file changes to a specific user message checkpoint.
-    pub async fn rewind_files(&mut self, user_message_id: &str) -> Result<()> {
+    pub async fn rewind_files(&self, user_message_id: &str) -> Result<()> {
         self.send_control_request(
             json!({ "subtype": "rewind_files", "user_message_id": user_message_id }),
             Duration::from_secs(60),
@@ -775,18 +473,458 @@ impl Query {
         Ok(())
     }
 
-    /// Closes the transport and ends the query session.
-    pub async fn close(&mut self) -> Result<()> {
-        self.transport.close().await
+    /// Closes the query session.
+    pub async fn close(mut self) -> Result<()> {
+        self.shutdown().await
     }
 
-    /// Closes the query session and returns the underlying transport.
-    ///
-    /// This allows the transport to be reused for subsequent connections
-    /// (e.g., when reconnecting a [`ClaudeSdkClient`](crate::ClaudeSdkClient)
-    /// with a custom transport).
-    pub async fn close_and_take_transport(mut self) -> Result<Box<dyn Transport>> {
-        self.transport.close().await?;
-        Ok(self.transport)
+    /// Internal shutdown logic.
+    async fn shutdown(&mut self) -> Result<()> {
+        self.message_rx.take();
+        self.state.take();
+
+        if let Some(task) = self.reader_task.take() {
+            task.abort();
+            let _ = task.await;
+        }
+
+        if let Some(close_handle) = self.close_handle.take() {
+            close_handle.close().await?;
+        }
+
+        Ok(())
     }
+
+    /// Takes the message receiver for stream construction.
+    pub(crate) fn take_message_receiver(&mut self) -> Option<mpsc::Receiver<Result<Message>>> {
+        self.message_rx.take()
+    }
+}
+
+impl Drop for Query {
+    fn drop(&mut self) {
+        if let Some(task) = self.reader_task.take() {
+            task.abort();
+        }
+
+        if let Some(close_handle) = self.close_handle.take() {
+            // Spawn a detached task to perform async cleanup.
+            // If the runtime is shutting down or unavailable, the
+            // SubprocessCloseHandle's own Drop impl provides a sync fallback.
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    let _ = close_handle.close().await;
+                });
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Background Reader Task
+// ---------------------------------------------------------------------------
+
+/// Background task that continuously reads from the transport reader and routes
+/// messages to their appropriate destinations.
+async fn background_reader_task(
+    mut reader: Box<dyn TransportReader>,
+    state: Arc<QuerySharedState>,
+    message_tx: mpsc::Sender<Result<Message>>,
+) {
+    loop {
+        // Handle deferred stdin close timeout.
+        let read_result = if state.pending_stdin_close.load(Ordering::SeqCst) {
+            let timeout_dur = state.stream_close_timeout;
+            match tokio::time::timeout(timeout_dur, reader.read_next_message()).await {
+                Ok(result) => result,
+                Err(_) => {
+                    debug!("Timed out waiting for first result, closing input stream");
+                    try_close_deferred_stdin(&state).await;
+                    continue;
+                }
+            }
+        } else {
+            reader.read_next_message().await
+        };
+
+        let raw = match read_result {
+            Ok(Some(raw)) => raw,
+            Ok(None) => {
+                try_close_deferred_stdin(&state).await;
+                break;
+            }
+            Err(err) => {
+                let _ = message_tx.send(Err(err)).await;
+                break;
+            }
+        };
+
+        let msg_type = raw.get("type").and_then(Value::as_str).unwrap_or_default();
+
+        if msg_type == "control_response" {
+            handle_control_response(&state, &raw).await;
+            continue;
+        }
+
+        if msg_type == "control_request" {
+            if let Err(err) = handle_control_request(&state, raw).await {
+                debug!("Error handling control request: {err}");
+            }
+            continue;
+        }
+
+        if msg_type == "control_cancel_request" {
+            continue;
+        }
+
+        // Parse and forward SDK messages.
+        match parse_message(&raw) {
+            Ok(Some(msg)) => {
+                if matches!(msg, Message::Result(_))
+                    && state.pending_stdin_close.load(Ordering::SeqCst)
+                {
+                    debug!("Received first result, closing input stream");
+                    try_close_deferred_stdin(&state).await;
+                }
+
+                if message_tx.send(Ok(msg)).await.is_err() {
+                    break;
+                }
+            }
+            Ok(None) => {}
+            Err(err) => {
+                if message_tx.send(Err(Error::MessageParse(err))).await.is_err() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Closes deferred stdin via the shared writer.
+async fn try_close_deferred_stdin(state: &QuerySharedState) {
+    if state
+        .pending_stdin_close
+        .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
+    {
+        if let Err(e) = state.writer.lock().await.end_input().await {
+            debug!("Error closing deferred stdin: {e}");
+        }
+    }
+}
+
+/// Routes a control response to the waiting oneshot sender, or buffers it.
+///
+/// If no sender is registered for this response's `request_id`, the parsed
+/// result is stored in the buffer for later retrieval by `send_control_request`.
+async fn handle_control_response(state: &QuerySharedState, raw: &Value) {
+    let Some(response) = raw.get("response").and_then(Value::as_object) else {
+        return;
+    };
+    let response_request_id = response
+        .get("request_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    let subtype = response
+        .get("subtype")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    let result: Result<Value> = if subtype == "error" {
+        let error = response
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("Unknown error");
+        Err(Error::Other(error.to_string()))
+    } else {
+        Ok(response
+            .get("response")
+            .cloned()
+            .unwrap_or_else(|| json!({})))
+    };
+
+    let mut controls = state.pending_controls.lock().await;
+    if let Some(sender) = controls.senders.remove(response_request_id) {
+        let _ = sender.send(result);
+    } else {
+        // Response arrived before sender was registered — buffer it.
+        controls
+            .buffered
+            .insert(response_request_id.to_string(), result);
+    }
+}
+
+/// Handles an incoming control request from the CLI within the background task.
+async fn handle_control_request(state: &QuerySharedState, request: Value) -> Result<()> {
+    let Some(request_obj) = request.as_object() else {
+        return Err(Error::Other("Invalid control request format".to_string()));
+    };
+    let request_id = request_obj
+        .get("request_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| Error::Other("Missing request_id in control request".to_string()))?
+        .to_string();
+    let request_data = request_obj
+        .get("request")
+        .and_then(Value::as_object)
+        .ok_or_else(|| Error::Other("Missing request payload".to_string()))?;
+    let subtype = request_data
+        .get("subtype")
+        .and_then(Value::as_str)
+        .ok_or_else(|| Error::Other("Missing request subtype".to_string()))?;
+
+    let result: Result<Value> = match subtype {
+        "can_use_tool" => {
+            let callback = state.can_use_tool.clone().ok_or_else(|| {
+                Error::Other("canUseTool callback is not provided".to_string())
+            })?;
+            let tool_name = request_data
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let input = request_data
+                .get("input")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let suggestions = request_data
+                .get("permission_suggestions")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|value| serde_json::from_value(value).ok())
+                .collect();
+            let context = ToolPermissionContext { suggestions };
+
+            let callback_result = callback(tool_name, input.clone(), context).await?;
+            let output = match callback_result {
+                PermissionResult::Allow(allow) => {
+                    let mut obj = Map::new();
+                    obj.insert("behavior".to_string(), Value::String("allow".to_string()));
+                    obj.insert(
+                        "updatedInput".to_string(),
+                        allow.updated_input.unwrap_or(input),
+                    );
+                    if let Some(updated_permissions) = allow.updated_permissions {
+                        let permissions_json: Vec<Value> = updated_permissions
+                            .into_iter()
+                            .map(|permission| permission.to_cli_dict())
+                            .collect();
+                        obj.insert(
+                            "updatedPermissions".to_string(),
+                            Value::Array(permissions_json),
+                        );
+                    }
+                    Value::Object(obj)
+                }
+                PermissionResult::Deny(deny) => {
+                    let mut obj = Map::new();
+                    obj.insert("behavior".to_string(), Value::String("deny".to_string()));
+                    obj.insert("message".to_string(), Value::String(deny.message));
+                    if deny.interrupt {
+                        obj.insert("interrupt".to_string(), Value::Bool(true));
+                    }
+                    Value::Object(obj)
+                }
+            };
+            Ok(output)
+        }
+        "hook_callback" => {
+            let callback_id = request_data
+                .get("callback_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    Error::Other("Missing callback_id in hook_callback".to_string())
+                })?;
+            let callback = state
+                .hook_callbacks
+                .lock()
+                .await
+                .get(callback_id)
+                .cloned()
+                .ok_or_else(|| {
+                    Error::Other(format!("No hook callback found for ID: {callback_id}"))
+                })?;
+            let input = request_data.get("input").cloned().unwrap_or(Value::Null);
+            let tool_use_id = request_data
+                .get("tool_use_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string);
+            let output = callback(input, tool_use_id, Default::default()).await?;
+            Ok(convert_hook_output_for_cli(output))
+        }
+        "mcp_message" => {
+            let server_name = request_data
+                .get("server_name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    Error::Other("Missing server_name in mcp_message".to_string())
+                })?;
+            let message = request_data
+                .get("message")
+                .cloned()
+                .ok_or_else(|| Error::Other("Missing message in mcp_message".to_string()))?;
+            let response =
+                handle_sdk_mcp_request(&state.sdk_mcp_servers, server_name, &message).await;
+            Ok(json!({ "mcp_response": response }))
+        }
+        _ => Err(Error::Other(format!(
+            "Unsupported control request subtype: {subtype}"
+        ))),
+    };
+
+    let response_json = match result {
+        Ok(payload) => json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": request_id,
+                "response": payload
+            }
+        }),
+        Err(err) => json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "error",
+                "request_id": request_id,
+                "error": err.to_string()
+            }
+        }),
+    };
+
+    state
+        .writer
+        .lock()
+        .await
+        .write(&(response_json.to_string() + "\n"))
+        .await
+}
+
+/// Routes an MCP message to the appropriate in-process SDK MCP server.
+///
+/// Implements JSON-RPC message routing for in-process SDK MCP servers.
+/// Handles `initialize`, `tools/list`, `tools/call`, and `notifications/initialized` methods.
+pub async fn handle_sdk_mcp_request(
+    sdk_mcp_servers: &HashMap<String, Arc<McpSdkServer>>,
+    server_name: &str,
+    message: &Value,
+) -> Value {
+    let Some(server) = sdk_mcp_servers.get(server_name) else {
+        return json!({
+            "jsonrpc": "2.0",
+            "id": message.get("id").cloned().unwrap_or(Value::Null),
+            "error": {
+                "code": -32601,
+                "message": format!("Server '{server_name}' not found")
+            }
+        });
+    };
+
+    let method = message
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let id = message.get("id").cloned().unwrap_or(Value::Null);
+    let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
+
+    match method {
+        "initialize" => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {
+                    "name": server.name,
+                    "version": server.version
+                }
+            }
+        }),
+        "tools/list" => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "tools": server.list_tools_json()
+            }
+        }),
+        "tools/call" => {
+            let tool_name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let arguments = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let result = server.call_tool_json(tool_name, arguments).await;
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": result
+            })
+        }
+        "notifications/initialized" => json!({
+            "jsonrpc": "2.0",
+            "result": {}
+        }),
+        _ => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": -32601,
+                "message": format!("Method '{method}' not found")
+            }
+        }),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helper: Build hooks config and callbacks
+// ---------------------------------------------------------------------------
+
+/// Builds the hooks configuration for the initialization handshake and extracts
+/// hook callbacks for the background task.
+pub(crate) fn build_hooks_config(
+    hooks: &HashMap<String, Vec<HookMatcher>>,
+) -> (Map<String, Value>, HashMap<String, HookCallback>) {
+    let mut hooks_config = Map::new();
+    let mut hook_callbacks = HashMap::new();
+    let mut next_callback_id: usize = 0;
+
+    for (event, matchers) in hooks {
+        if matchers.is_empty() {
+            continue;
+        }
+        let mut event_matchers = Vec::new();
+        for matcher in matchers {
+            let mut callback_ids = Vec::new();
+            for callback in &matcher.hooks {
+                let callback_id = format!("hook_{}", next_callback_id);
+                next_callback_id += 1;
+                hook_callbacks.insert(callback_id.clone(), callback.clone());
+                callback_ids.push(callback_id);
+            }
+
+            let mut matcher_obj = Map::new();
+            matcher_obj.insert(
+                "matcher".to_string(),
+                matcher
+                    .matcher
+                    .as_ref()
+                    .map(|m| Value::String(m.clone()))
+                    .unwrap_or(Value::Null),
+            );
+            matcher_obj.insert("hookCallbackIds".to_string(), json!(callback_ids));
+            if let Some(timeout) = matcher.timeout {
+                matcher_obj.insert("timeout".to_string(), json!(timeout));
+            }
+            event_matchers.push(Value::Object(matcher_obj));
+        }
+        hooks_config.insert(event.clone(), Value::Array(event_matchers));
+    }
+
+    (hooks_config, hook_callbacks)
 }

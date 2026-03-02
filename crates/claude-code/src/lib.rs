@@ -87,10 +87,13 @@ pub use errors::{
     MessageParseError, ProcessError, Result,
 };
 pub use message_parser::parse_message;
-pub use query::Query;
+pub use query::{Query, handle_sdk_mcp_request};
 pub use query_fn::{query, query_from_stream, query_stream, query_stream_from_stream};
 pub use sdk_mcp::{McpSdkServer, SdkMcpTool, create_sdk_mcp_server, tool};
-pub use transport::Transport;
+pub use transport::{
+    SplitAdapter, Transport, TransportCloseHandle, TransportFactory, TransportReader,
+    TransportSplitResult, TransportWriter, split_with_adapter,
+};
 pub use transport::subprocess_cli::{
     DEFAULT_MAX_BUFFER_SIZE, JsonStreamBuffer, Prompt, SubprocessCliTransport,
 };

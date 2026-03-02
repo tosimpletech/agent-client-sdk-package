@@ -8,16 +8,18 @@
 //! directly.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
-use futures::stream::LocalBoxStream;
+use futures::stream::BoxStream;
 use futures::{Stream, StreamExt};
 use serde_json::Value;
 use serde_json::json;
 
 use crate::client::InputPrompt;
 use crate::errors::{Error, Result};
-use crate::query::Query;
+use crate::query::{Query, build_hooks_config};
+use crate::sdk_mcp::McpSdkServer;
 use crate::transport::Transport;
 use crate::transport::subprocess_cli::{Prompt as TransportPrompt, SubprocessCliTransport};
 use crate::types::{ClaudeAgentOptions, McpServerConfig, McpServersOption, Message};
@@ -44,7 +46,7 @@ impl InternalClient {
     /// Extracts SDK MCP server instances from the options for in-process routing.
     fn extract_sdk_mcp_servers(
         options: &ClaudeAgentOptions,
-    ) -> HashMap<String, std::sync::Arc<crate::sdk_mcp::McpSdkServer>> {
+    ) -> HashMap<String, Arc<McpSdkServer>> {
         let mut servers = HashMap::new();
         if let McpServersOption::Servers(configs) = &options.mcp_servers {
             for (name, config) in configs {
@@ -97,21 +99,28 @@ impl InternalClient {
         };
         chosen_transport.connect().await?;
 
-        let mut query = Query::new(
-            chosen_transport,
+        let hooks = options.hooks.clone().unwrap_or_default();
+        let sdk_mcp_servers = Self::extract_sdk_mcp_servers(&options);
+        let (hooks_config, hook_callbacks) = build_hooks_config(&hooks);
+
+        let (reader, writer, close_handle) = chosen_transport.into_split()?;
+
+        let mut query = Query::start(
+            reader,
+            writer,
+            close_handle,
             true,
             options.can_use_tool.clone(),
-            options.hooks.clone(),
-            Some(Self::extract_sdk_mcp_servers(&options)),
+            hook_callbacks,
+            sdk_mcp_servers,
             options.agents.clone(),
             Duration::from_secs(60),
         );
-        query.start().await?;
-        query.initialize().await?;
+        query.initialize(hooks_config).await?;
         Ok(query)
     }
 
-    async fn send_prompt(query: &mut Query, prompt: InputPrompt) -> Result<()> {
+    async fn send_prompt(query: &Query, prompt: InputPrompt) -> Result<()> {
         match prompt {
             InputPrompt::Text(text) => {
                 query
@@ -148,54 +157,35 @@ impl InternalClient {
         }
     }
 
-    fn into_message_stream(query: Query) -> LocalBoxStream<'static, Result<Message>> {
-        struct QueryStreamState {
-            query: Query,
-            done: bool,
+    fn into_message_stream(mut query: Query) -> BoxStream<'static, Result<Message>> {
+        let rx = query.take_message_receiver();
+
+        if let Some(rx) = rx {
+            // Use the channel receiver directly — this is Send.
+            let close_handle_query = query;
+            futures::stream::unfold(
+                (rx, Some(close_handle_query)),
+                |(mut rx, query)| async move {
+                    match rx.recv().await {
+                        Some(msg) => Some((msg, (rx, query))),
+                        None => {
+                            // Channel closed — close the query.
+                            if let Some(q) = query {
+                                let _ = q.close().await;
+                            }
+                            None
+                        }
+                    }
+                },
+            )
+            .boxed()
+        } else {
+            // Fallback: empty stream.
+            futures::stream::empty().boxed()
         }
-
-        futures::stream::try_unfold(
-            QueryStreamState { query, done: false },
-            |mut state| async move {
-                if state.done {
-                    return Ok(None);
-                }
-
-                match state.query.receive_next_message().await {
-                    Ok(Some(message)) => Ok(Some((message, state))),
-                    Ok(None) => {
-                        state.done = true;
-                        state.query.close().await?;
-                        Ok(None)
-                    }
-                    Err(err) => {
-                        let _ = state.query.close().await;
-                        Err(err)
-                    }
-                }
-            },
-        )
-        .boxed_local()
     }
 
     /// Executes a complete query lifecycle: connect, send, receive all messages, and close.
-    ///
-    /// # Arguments
-    ///
-    /// * `prompt` — The input prompt (text or structured messages).
-    /// * `options` — Configuration options for this query.
-    /// * `transport` — Optional custom transport. If `None`, uses the default subprocess transport.
-    ///
-    /// # Returns
-    ///
-    /// A `Vec<Message>` containing all messages from the interaction.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - `can_use_tool` is set with a `Text` prompt
-    /// - `can_use_tool` is set alongside `permission_prompt_tool_name`
-    /// - The CLI process fails to start or communicate
     pub async fn process_query(
         &self,
         prompt: InputPrompt,
@@ -210,10 +200,10 @@ impl InternalClient {
             InputPrompt::Messages(_) => TransportPrompt::Messages,
         };
 
-        let mut query = self
+        let query = self
             .initialize_query(transport_prompt, configured_options, transport)
             .await?;
-        Self::send_prompt(&mut query, prompt).await?;
+        Self::send_prompt(&query, prompt).await?;
         Self::collect_messages(query).await
     }
 
@@ -228,7 +218,7 @@ impl InternalClient {
         S: Stream<Item = Value> + Unpin,
     {
         let configured_options = Self::configure_options(options, false)?;
-        let mut query = self
+        let query = self
             .initialize_query(TransportPrompt::Messages, configured_options, transport)
             .await?;
         query.stream_input_from_stream(prompt).await?;
@@ -236,22 +226,24 @@ impl InternalClient {
     }
 
     /// Executes a one-shot query and returns a streaming response interface.
+    ///
+    /// The returned stream is `Send` and can be consumed from any tokio task.
     pub async fn process_query_as_stream(
         &self,
         prompt: InputPrompt,
         options: ClaudeAgentOptions,
         transport: Option<Box<dyn Transport>>,
-    ) -> Result<LocalBoxStream<'static, Result<Message>>> {
+    ) -> Result<BoxStream<'static, Result<Message>>> {
         let configured_options =
             Self::configure_options(options, matches!(prompt, InputPrompt::Text(_)))?;
         let transport_prompt = match &prompt {
             InputPrompt::Text(text) => TransportPrompt::Text(text.clone()),
             InputPrompt::Messages(_) => TransportPrompt::Messages,
         };
-        let mut query = self
+        let query = self
             .initialize_query(transport_prompt, configured_options, transport)
             .await?;
-        Self::send_prompt(&mut query, prompt).await?;
+        Self::send_prompt(&query, prompt).await?;
         Ok(Self::into_message_stream(query))
     }
 
@@ -261,12 +253,12 @@ impl InternalClient {
         prompt: S,
         options: ClaudeAgentOptions,
         transport: Option<Box<dyn Transport>>,
-    ) -> Result<LocalBoxStream<'static, Result<Message>>>
+    ) -> Result<BoxStream<'static, Result<Message>>>
     where
         S: Stream<Item = Value> + Unpin,
     {
         let configured_options = Self::configure_options(options, false)?;
-        let mut query = self
+        let query = self
             .initialize_query(TransportPrompt::Messages, configured_options, transport)
             .await?;
         query.stream_input_from_stream(prompt).await?;

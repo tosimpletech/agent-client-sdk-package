@@ -2,7 +2,10 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use claude_code::{ClaudeSdkClient, InputPrompt, Message, Result, Transport};
+use claude_code::{
+    ClaudeSdkClient, InputPrompt, Message, Result, Transport, TransportSplitResult,
+    split_with_adapter,
+};
 use futures::stream;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
@@ -67,6 +70,10 @@ impl Transport for MockTransport {
     fn is_ready(&self) -> bool {
         true
     }
+
+    fn into_split(self: Box<Self>) -> TransportSplitResult {
+        split_with_adapter(self)
+    }
 }
 
 #[tokio::test]
@@ -77,7 +84,7 @@ async fn test_manual_connect_disconnect() {
     })]);
     let state = transport.state.clone();
 
-    let mut client = ClaudeSdkClient::new(None, Some(Box::new(transport)));
+    let mut client = ClaudeSdkClient::new_with_transport(None, Box::new(transport));
     client.connect(None).await.expect("connect");
     client.disconnect().await.expect("disconnect");
 
@@ -99,7 +106,7 @@ async fn test_query_sends_user_message_with_session() {
     })]);
     let state = transport.state.clone();
 
-    let mut client = ClaudeSdkClient::new(None, Some(Box::new(transport)));
+    let mut client = ClaudeSdkClient::new_with_transport(None, Box::new(transport));
     client.connect(None).await.expect("connect");
     client
         .query(InputPrompt::Text("Test message".to_string()), "default")
@@ -149,7 +156,7 @@ async fn test_receive_response_stops_at_result() {
         }),
     ]);
 
-    let mut client = ClaudeSdkClient::new(None, Some(Box::new(transport)));
+    let mut client = ClaudeSdkClient::new_with_transport(None, Box::new(transport));
     client.connect(None).await.expect("connect");
     let messages = client.receive_response().await.expect("response");
     assert_eq!(messages.len(), 2);
@@ -171,7 +178,7 @@ async fn test_interrupt_sends_control_request() {
     ]);
     let state = transport.state.clone();
 
-    let mut client = ClaudeSdkClient::new(None, Some(Box::new(transport)));
+    let mut client = ClaudeSdkClient::new_with_transport(None, Box::new(transport));
     client.connect(None).await.expect("connect");
     client.interrupt().await.expect("interrupt");
 
@@ -186,7 +193,7 @@ async fn test_interrupt_sends_control_request() {
 
 #[tokio::test]
 async fn test_errors_when_not_connected() {
-    let mut client = ClaudeSdkClient::new(None, None);
+    let client = ClaudeSdkClient::new(None, None);
     let err = client
         .query(InputPrompt::Text("Test".to_string()), "default")
         .await
@@ -205,7 +212,7 @@ async fn test_query_stream_injects_session_id() {
     })]);
     let state = transport.state.clone();
 
-    let mut client = ClaudeSdkClient::new(None, Some(Box::new(transport)));
+    let mut client = ClaudeSdkClient::new_with_transport(None, Box::new(transport));
     client.connect(None).await.expect("connect");
     let input = stream::iter(vec![json!({
         "type": "user",
@@ -233,7 +240,7 @@ async fn test_query_stream_keeps_session_open_for_follow_up_query() {
     })]);
     let state = transport.state.clone();
 
-    let mut client = ClaudeSdkClient::new(None, Some(Box::new(transport)));
+    let mut client = ClaudeSdkClient::new_with_transport(None, Box::new(transport));
     client.connect(None).await.expect("connect");
     let streamed = stream::iter(vec![json!({
         "type": "user",
@@ -273,7 +280,7 @@ async fn test_connect_with_messages_does_not_close_stdin() {
     })]);
     let state = transport.state.clone();
 
-    let mut client = ClaudeSdkClient::new(None, Some(Box::new(transport)));
+    let mut client = ClaudeSdkClient::new_with_transport(None, Box::new(transport));
     client
         .connect(Some(InputPrompt::Messages(vec![json!({
             "type": "user",

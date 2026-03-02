@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use claude_code::{
-    Error, InputPrompt, Message, Result, Transport, query, query_from_stream, query_stream,
-    query_stream_from_stream,
+    Error, InputPrompt, Message, Result, Transport, TransportSplitResult, query, query_from_stream,
+    query_stream, query_stream_from_stream, split_with_adapter,
 };
 use futures::TryStreamExt;
 use futures::stream;
@@ -63,6 +63,10 @@ impl Transport for MockTransport {
 
     fn is_ready(&self) -> bool {
         true
+    }
+
+    fn into_split(self: Box<Self>) -> TransportSplitResult {
+        split_with_adapter(self)
     }
 }
 
@@ -214,6 +218,10 @@ impl Transport for FailingReadTransport {
     fn is_ready(&self) -> bool {
         true
     }
+
+    fn into_split(self: Box<Self>) -> TransportSplitResult {
+        split_with_adapter(self)
+    }
 }
 
 #[tokio::test]
@@ -232,4 +240,29 @@ async fn test_one_shot_query_closes_transport_on_read_error() {
     assert!(err.to_string().contains("forced read failure"));
     let state = state.lock().await;
     assert_eq!(state.close_calls, 1);
+}
+
+#[tokio::test]
+async fn test_stream_early_drop_triggers_cleanup() {
+    // Dropping a stream before consuming all messages should invoke cleanup
+    // via Query::drop (which spawns an async close task) without panicking.
+    let transport = MockTransport::with_messages(protocol_messages());
+
+    let stream = query_stream(
+        InputPrompt::Text("Hello".to_string()),
+        None,
+        Some(Box::new(transport)),
+    )
+    .await
+    .expect("query_stream");
+
+    // Drop the stream without consuming it.
+    drop(stream);
+
+    // Allow the spawned cleanup task to run.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // The key assertion is that no panic or leak occurs.
+    // For MockTransport (SplitAdapter), the close path exercises
+    // Query::drop → spawned close_handle.close().
 }

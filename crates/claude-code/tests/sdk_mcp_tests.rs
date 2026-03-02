@@ -1,33 +1,8 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use async_trait::async_trait;
-use claude_code::{Query, Result, ToolAnnotations, Transport, create_sdk_mcp_server, tool};
+use claude_code::{ToolAnnotations, create_sdk_mcp_server, handle_sdk_mcp_request, tool};
 use serde_json::{Value, json};
-
-#[derive(Default)]
-struct DummyTransport;
-
-#[async_trait]
-impl Transport for DummyTransport {
-    async fn connect(&mut self) -> Result<()> {
-        Ok(())
-    }
-    async fn write(&mut self, _data: &str) -> Result<()> {
-        Ok(())
-    }
-    async fn end_input(&mut self) -> Result<()> {
-        Ok(())
-    }
-    async fn read_next_message(&mut self) -> Result<Option<Value>> {
-        Ok(None)
-    }
-    async fn close(&mut self) -> Result<()> {
-        Ok(())
-    }
-    fn is_ready(&self) -> bool {
-        true
-    }
-}
 
 #[tokio::test]
 async fn test_tool_creation_and_call() {
@@ -117,24 +92,16 @@ async fn test_tool_annotations_in_list_and_jsonrpc() {
             || by_name["plain_tool"].get("annotations").is_none()
     );
 
+    // Test through handle_sdk_mcp_request for JSON-RPC format verification.
     let mut servers = HashMap::new();
-    servers.insert("test".to_string(), server.instance.clone());
-    let query = Query::new(
-        Box::new(DummyTransport),
-        true,
-        None,
-        None,
-        Some(servers),
-        None,
-        std::time::Duration::from_secs(60),
-    );
+    servers.insert("test".to_string(), Arc::clone(&server.instance));
 
-    let response = query
-        .handle_sdk_mcp_request(
-            "test",
-            &json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}),
-        )
-        .await;
+    let response = handle_sdk_mcp_request(
+        &servers,
+        "test",
+        &json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}),
+    )
+    .await;
     let tools = response["result"]["tools"].as_array().expect("tools");
     let by_name: HashMap<String, Value> = tools
         .iter()

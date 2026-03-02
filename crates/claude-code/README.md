@@ -54,12 +54,11 @@ Current status: all tests pass with `cargo test`.
 - `thiserror` is used for structured error types and transparent wrapper behavior where appropriate.
 - Codebase is kept clippy-clean under strict mode: `cargo clippy --all-targets --all-features -- -D warnings`.
 
-## Known Limitations and Concurrency Model
+## Concurrency Model
 
-- `Query::start()` is currently a no-op, and the SDK uses a pull-based read model (`receive_next_message`) instead of a dedicated background reader task.
-- Control protocol messages (`control_request`) are handled inline while receiving messages, which keeps behavior correct for the current API surface but is less resilient than Python's task-group model under extreme bidirectional streaming patterns.
-- One-shot streaming APIs (`query_stream`, `query_stream_from_stream`) return `LocalBoxStream`, which is not `Send`. Consume these streams on the same task/thread where they are created.
-- For cross-task fan-out, prefer adapting the returned stream into an application channel (`tokio::sync::mpsc`) or collecting into owned values before handoff.
+- `Query::start()` spawns a background tokio task that reads from the transport, routes control responses via oneshot channels, handles incoming control requests (permissions, hooks, MCP), and delivers SDK messages via an mpsc channel. This mirrors the Python SDK's task-group model.
+- One-shot streaming APIs (`query_stream`, `query_stream_from_stream`) return `BoxStream` which is `Send`, safe to consume from any tokio task.
+- `ClaudeSdkClient` supports reconnect after disconnect when constructed with a `TransportFactory`. Methods like `query()`, `interrupt()`, `set_model()` take `&self` for concurrent use from different tasks.
 
 ## Functional Differences vs Python SDK
 

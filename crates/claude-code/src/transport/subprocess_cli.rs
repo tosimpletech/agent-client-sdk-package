@@ -21,7 +21,7 @@ use tokio::sync::Mutex;
 use crate::errors::{
     CLIConnectionError, CLIJSONDecodeError, CLINotFoundError, Error, ProcessError, Result,
 };
-use crate::transport::Transport;
+use crate::transport::{Transport, TransportCloseHandle, TransportReader, TransportWriter};
 use crate::types::{
     ClaudeAgentOptions, McpServersOption, PermissionMode, SettingSource, StderrCallback,
     SystemPrompt, ThinkingConfig, ToolsOption,
@@ -868,6 +868,190 @@ impl Transport for SubprocessCliTransport {
 
     fn is_ready(&self) -> bool {
         self.ready
+    }
+
+    fn into_split(mut self: Box<Self>) -> super::TransportSplitResult {
+        if !self.ready {
+            return Err(CLIConnectionError::new(
+                "Cannot split a transport that is not connected",
+            )
+            .into());
+        }
+
+        let stdout = self.stdout.take().ok_or_else(|| {
+            Error::CLIConnection(CLIConnectionError::new(
+                "Cannot split: stdout not available",
+            ))
+        })?;
+
+        let stdin = self.stdin.take();
+
+        let close_state = Arc::new(SubprocessCloseState {
+            child: Mutex::new(self.child.take()),
+            stderr_task: Mutex::new(self.stderr_task.take()),
+        });
+
+        let reader = SubprocessReader {
+            stdout,
+            parser: self.parser.clone(),
+            pending_messages: std::mem::take(&mut self.pending_messages),
+            close_state: close_state.clone(),
+        };
+
+        let writer = SubprocessWriter {
+            stdin: Mutex::new(stdin),
+            write_lock: self.write_lock.clone(),
+        };
+
+        Ok((
+            Box::new(reader),
+            Box::new(writer),
+            Box::new(SubprocessCloseHandle { state: close_state }),
+        ))
+    }
+}
+
+/// Shared state for subprocess cleanup after splitting.
+struct SubprocessCloseState {
+    child: Mutex<Option<Child>>,
+    stderr_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+/// Reader half of a split [`SubprocessCliTransport`].
+///
+/// Owns the stdout stream and JSON parser.
+pub struct SubprocessReader {
+    stdout: BufReader<ChildStdout>,
+    parser: JsonStreamBuffer,
+    pending_messages: VecDeque<Value>,
+    close_state: Arc<SubprocessCloseState>,
+}
+
+#[async_trait]
+impl TransportReader for SubprocessReader {
+    async fn read_next_message(&mut self) -> Result<Option<Value>> {
+        if let Some(message) = self.pending_messages.pop_front() {
+            return Ok(Some(message));
+        }
+
+        loop {
+            let mut line = String::new();
+            let bytes_read = self.stdout.read_line(&mut line).await?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            let parsed = self.parser.push_chunk(&line)?;
+            for message in parsed {
+                self.pending_messages.push_back(message);
+            }
+            if let Some(message) = self.pending_messages.pop_front() {
+                return Ok(Some(message));
+            }
+        }
+
+        // EOF — wait for child process
+        if let Some(child) = &mut *self.close_state.child.lock().await {
+            let status = child.wait().await.map_err(|e| {
+                Error::Process(ProcessError::new(
+                    format!("Failed to wait for process completion: {e}"),
+                    None,
+                    None,
+                ))
+            })?;
+            if !status.success() {
+                return Err(ProcessError::new(
+                    "Command failed",
+                    status.code(),
+                    Some("Check stderr output for details".to_string()),
+                )
+                .into());
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// Writer half of a split [`SubprocessCliTransport`].
+///
+/// Owns the stdin handle.
+pub struct SubprocessWriter {
+    stdin: Mutex<Option<ChildStdin>>,
+    write_lock: Arc<Mutex<()>>,
+}
+
+#[async_trait]
+impl TransportWriter for SubprocessWriter {
+    async fn write(&mut self, data: &str) -> Result<()> {
+        let _guard = self.write_lock.lock().await;
+
+        let mut stdin_guard = self.stdin.lock().await;
+        let stdin = stdin_guard.as_mut().ok_or_else(|| {
+            Error::CLIConnection(CLIConnectionError::new("stdin is closed"))
+        })?;
+
+        stdin.write_all(data.as_bytes()).await.map_err(|e| {
+            Error::CLIConnection(CLIConnectionError::new(format!(
+                "Failed to write to process stdin: {e}"
+            )))
+        })?;
+        stdin.flush().await.map_err(|e| {
+            Error::CLIConnection(CLIConnectionError::new(format!(
+                "Failed to flush process stdin: {e}"
+            )))
+        })?;
+
+        Ok(())
+    }
+
+    async fn end_input(&mut self) -> Result<()> {
+        let _guard = self.write_lock.lock().await;
+        self.stdin.lock().await.take();
+        Ok(())
+    }
+}
+
+/// Close handle for a split [`SubprocessCliTransport`].
+struct SubprocessCloseHandle {
+    state: Arc<SubprocessCloseState>,
+}
+
+#[async_trait]
+impl TransportCloseHandle for SubprocessCloseHandle {
+    async fn close(&self) -> Result<()> {
+        // Drop stdin is already handled by writer
+        if let Some(child) = &mut *self.state.child.lock().await {
+            if child.try_wait()?.is_none() {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+            }
+        }
+        *self.state.child.lock().await = None;
+
+        if let Some(task) = self.state.stderr_task.lock().await.take() {
+            task.abort();
+        }
+        Ok(())
+    }
+}
+
+impl Drop for SubprocessCloseHandle {
+    fn drop(&mut self) {
+        // Best-effort sync cleanup: kill the child process without waiting.
+        // This is a last-resort safety net for cases where async close() was
+        // not called (e.g., early stream drop without explicit shutdown).
+        if let Ok(mut child_guard) = self.state.child.try_lock() {
+            if let Some(child) = child_guard.as_mut() {
+                if child.try_wait().ok().flatten().is_none() {
+                    let _ = child.start_kill();
+                }
+            }
+        }
+        if let Ok(mut task_guard) = self.state.stderr_task.try_lock() {
+            if let Some(task) = task_guard.take() {
+                task.abort();
+            }
+        }
     }
 }
 

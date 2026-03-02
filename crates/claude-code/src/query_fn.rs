@@ -13,7 +13,7 @@ use crate::internal_client::InternalClient;
 use crate::transport::Transport;
 use crate::types::{ClaudeAgentOptions, Message};
 use futures::Stream;
-use futures::stream::LocalBoxStream;
+use futures::stream::BoxStream;
 use serde_json::Value;
 
 /// Sends a one-off query to Claude Code and returns all response messages.
@@ -90,13 +90,12 @@ where
 ///
 /// The returned stream yields parsed [`Message`] values as they arrive.
 ///
-/// Note: the return type is [`LocalBoxStream`], so the stream is not `Send`.
-/// Consume it on the same task where it is created.
+/// The stream is `Send` and can be consumed from any tokio task.
 pub async fn query_stream(
     prompt: InputPrompt,
     options: Option<ClaudeAgentOptions>,
     transport: Option<Box<dyn Transport>>,
-) -> Result<LocalBoxStream<'static, Result<Message>>> {
+) -> Result<BoxStream<'static, Result<Message>>> {
     let options = options.unwrap_or_default();
     let client = InternalClient::new();
     client
@@ -106,13 +105,12 @@ pub async fn query_stream(
 
 /// Sends a one-off query with streamed input and streamed output.
 ///
-/// Note: the return type is [`LocalBoxStream`], so the stream is not `Send`.
-/// Consume it on the same task where it is created.
+/// The returned stream is `Send` and can be consumed from any tokio task.
 pub async fn query_stream_from_stream<S>(
     prompt: S,
     options: Option<ClaudeAgentOptions>,
     transport: Option<Box<dyn Transport>>,
-) -> Result<LocalBoxStream<'static, Result<Message>>>
+) -> Result<BoxStream<'static, Result<Message>>>
 where
     S: Stream<Item = Value> + Unpin,
 {

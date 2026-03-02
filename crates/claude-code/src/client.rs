@@ -7,14 +7,16 @@
 //! For one-off queries without session management, see [`query()`](crate::query).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 use serde_json::Value;
 
 use crate::errors::{CLIConnectionError, Error, Result};
-use crate::query::Query;
-use crate::transport::Transport;
+use crate::query::{Query, build_hooks_config};
+use crate::sdk_mcp::McpSdkServer;
+use crate::transport::{Transport, TransportFactory};
 use crate::transport::subprocess_cli::{Prompt as TransportPrompt, SubprocessCliTransport};
 use crate::types::{ClaudeAgentOptions, McpServerConfig, McpServersOption, Message};
 
@@ -46,6 +48,13 @@ pub enum InputPrompt {
 ///    [`receive_message()`](Self::receive_message) or [`receive_response()`](Self::receive_response)
 /// 4. Call [`disconnect()`](Self::disconnect) when done
 ///
+/// # Concurrency
+///
+/// After connection, [`query()`](Self::query), [`interrupt()`](Self::interrupt),
+/// and control methods take `&self`, allowing concurrent operations from different
+/// tasks. Only [`connect()`](Self::connect), [`disconnect()`](Self::disconnect),
+/// and [`receive_message()`](Self::receive_message) require `&mut self`.
+///
 /// # Example
 ///
 /// ```rust,no_run
@@ -63,26 +72,65 @@ pub enum InputPrompt {
 /// ```
 pub struct ClaudeSdkClient {
     options: ClaudeAgentOptions,
-    custom_transport: Option<Box<dyn Transport>>,
-    has_custom_transport: bool,
+    transport_factory: Option<Box<dyn TransportFactory>>,
     query: Option<Query>,
 }
 
+/// Adapter that wraps a single pre-built transport instance as a one-shot factory.
+struct SingleUseTransportFactory(std::sync::Mutex<Option<Box<dyn Transport>>>);
+
+impl TransportFactory for SingleUseTransportFactory {
+    fn create_transport(&self) -> Result<Box<dyn Transport>> {
+        self.0
+            .lock()
+            .map_err(|_| Error::Other("Transport factory lock poisoned".to_string()))?
+            .take()
+            .ok_or_else(|| {
+                Error::Other(
+                    "Single-use transport already consumed. Use a TransportFactory for reconnect support."
+                        .to_string(),
+                )
+            })
+    }
+}
+
 impl ClaudeSdkClient {
-    /// Creates a new `ClaudeSdkClient` with optional configuration and transport.
+    /// Creates a new `ClaudeSdkClient` with optional configuration and transport factory.
     ///
     /// # Arguments
     ///
     /// * `options` — Optional [`ClaudeAgentOptions`] for configuring the session.
     ///   If `None`, defaults are used.
-    /// * `transport` — Optional custom [`Transport`] implementation. If `None`,
-    ///   the default [`SubprocessCliTransport`] is used.
-    pub fn new(options: Option<ClaudeAgentOptions>, transport: Option<Box<dyn Transport>>) -> Self {
-        let has_custom_transport = transport.is_some();
+    /// * `transport_factory` — Optional [`TransportFactory`] for creating transport
+    ///   instances on each [`connect()`](Self::connect) call. If `None`, the default
+    ///   [`SubprocessCliTransport`] is used. Using a factory enables reconnect after
+    ///   disconnect with the same client instance.
+    pub fn new(
+        options: Option<ClaudeAgentOptions>,
+        transport_factory: Option<Box<dyn TransportFactory>>,
+    ) -> Self {
         Self {
             options: options.unwrap_or_default(),
-            custom_transport: transport,
-            has_custom_transport,
+            transport_factory,
+            query: None,
+        }
+    }
+
+    /// Creates a new `ClaudeSdkClient` with a single-use custom transport.
+    ///
+    /// The transport is consumed on the first [`connect()`](Self::connect). Subsequent
+    /// `connect()` calls after [`disconnect()`](Self::disconnect) will return an error.
+    /// For reconnect support with custom transports, use [`new()`](Self::new) with a
+    /// [`TransportFactory`].
+    pub fn new_with_transport(
+        options: Option<ClaudeAgentOptions>,
+        transport: Box<dyn Transport>,
+    ) -> Self {
+        Self {
+            options: options.unwrap_or_default(),
+            transport_factory: Some(Box::new(SingleUseTransportFactory(
+                std::sync::Mutex::new(Some(transport)),
+            ))),
             query: None,
         }
     }
@@ -97,7 +145,7 @@ impl ClaudeSdkClient {
 
     fn extract_sdk_mcp_servers(
         options: &ClaudeAgentOptions,
-    ) -> HashMap<String, std::sync::Arc<crate::sdk_mcp::McpSdkServer>> {
+    ) -> HashMap<String, Arc<McpSdkServer>> {
         let mut servers = HashMap::new();
         if let McpServersOption::Servers(configs) = &options.mcp_servers {
             for (name, config) in configs {
@@ -155,8 +203,8 @@ impl ClaudeSdkClient {
             _ => TransportPrompt::Messages,
         };
 
-        let mut transport: Box<dyn Transport> = if let Some(custom) = self.custom_transport.take() {
-            custom
+        let mut transport: Box<dyn Transport> = if let Some(factory) = &self.transport_factory {
+            factory.create_transport()?
         } else {
             Box::new(SubprocessCliTransport::new(
                 transport_prompt,
@@ -165,17 +213,24 @@ impl ClaudeSdkClient {
         };
         transport.connect().await?;
 
-        let mut query = Query::new(
-            transport,
+        let hooks = configured_options.hooks.clone().unwrap_or_default();
+        let sdk_mcp_servers = Self::extract_sdk_mcp_servers(&configured_options);
+        let (hooks_config, hook_callbacks) = build_hooks_config(&hooks);
+
+        let (reader, writer, close_handle) = transport.into_split()?;
+
+        let mut query = Query::start(
+            reader,
+            writer,
+            close_handle,
             true,
             configured_options.can_use_tool.clone(),
-            configured_options.hooks.clone(),
-            Some(Self::extract_sdk_mcp_servers(&configured_options)),
+            hook_callbacks,
+            sdk_mcp_servers,
             configured_options.agents.clone(),
             Self::initialize_timeout(),
         );
-        query.start().await?;
-        query.initialize().await?;
+        query.initialize(hooks_config).await?;
 
         if let Some(InputPrompt::Messages(messages)) = prompt {
             query.send_input_messages(messages).await?;
@@ -194,14 +249,13 @@ impl ClaudeSdkClient {
     /// # Arguments
     ///
     /// * `prompt` — The prompt to send (text or structured messages).
-    /// * `session_id` — Session identifier for the query. Used to associate
-    ///   messages with a specific conversation thread.
+    /// * `session_id` — Session identifier for the query.
     ///
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
-    pub async fn query(&mut self, prompt: InputPrompt, session_id: &str) -> Result<()> {
-        let query = self.query.as_mut().ok_or_else(|| {
+    pub async fn query(&self, prompt: InputPrompt, session_id: &str) -> Result<()> {
+        let query = self.query.as_ref().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
                 "Not connected. Call connect() first.",
             ))
@@ -231,17 +285,14 @@ impl ClaudeSdkClient {
 
     /// Streams JSON message prompts within the current session.
     ///
-    /// Each streamed message is sent as it arrives. If a message object does not
-    /// include `session_id`, this method injects the provided `session_id`.
-    ///
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
-    pub async fn query_stream<S>(&mut self, prompt: S, session_id: &str) -> Result<()>
+    pub async fn query_stream<S>(&self, prompt: S, session_id: &str) -> Result<()>
     where
         S: Stream<Item = Value> + Unpin,
     {
-        let query = self.query.as_mut().ok_or_else(|| {
+        let query = self.query.as_ref().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
                 "Not connected. Call connect() first.",
             ))
@@ -261,12 +312,7 @@ impl ClaudeSdkClient {
 
     /// Receives a single message from the current query.
     ///
-    /// Returns `None` when no more messages are available (the stream has ended).
-    /// Use in a loop to process messages one at a time, or use
-    /// [`receive_response()`](Self::receive_response) to collect all messages at once.
-    ///
-    /// This method automatically handles control requests (permission prompts, hooks,
-    /// MCP calls) internally, only returning content messages to the caller.
+    /// Returns `None` when no more messages are available.
     ///
     /// # Errors
     ///
@@ -281,9 +327,6 @@ impl ClaudeSdkClient {
     }
 
     /// Receives all messages for the current query until a [`Message::Result`] is received.
-    ///
-    /// Collects messages into a `Vec`, stopping when a result message is encountered.
-    /// The result message is included as the last element.
     ///
     /// # Errors
     ///
@@ -302,14 +345,11 @@ impl ClaudeSdkClient {
 
     /// Interrupts the current operation.
     ///
-    /// Sends an interrupt signal to the CLI, causing it to stop the current
-    /// generation and return a result.
-    ///
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
-    pub async fn interrupt(&mut self) -> Result<()> {
-        let query = self.query.as_mut().ok_or_else(|| {
+    pub async fn interrupt(&self) -> Result<()> {
+        let query = self.query.as_ref().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
                 "Not connected. Call connect() first.",
             ))
@@ -319,16 +359,11 @@ impl ClaudeSdkClient {
 
     /// Changes the permission mode for the current session.
     ///
-    /// # Arguments
-    ///
-    /// * `mode` — The permission mode string (e.g., `"default"`, `"acceptEdits"`,
-    ///   `"plan"`, `"bypassPermissions"`).
-    ///
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
-    pub async fn set_permission_mode(&mut self, mode: &str) -> Result<()> {
-        let query = self.query.as_mut().ok_or_else(|| {
+    pub async fn set_permission_mode(&self, mode: &str) -> Result<()> {
+        let query = self.query.as_ref().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
                 "Not connected. Call connect() first.",
             ))
@@ -338,15 +373,11 @@ impl ClaudeSdkClient {
 
     /// Changes the model used for the current session.
     ///
-    /// # Arguments
-    ///
-    /// * `model` — The model identifier to switch to, or `None` to use the default.
-    ///
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
-    pub async fn set_model(&mut self, model: Option<&str>) -> Result<()> {
-        let query = self.query.as_mut().ok_or_else(|| {
+    pub async fn set_model(&self, model: Option<&str>) -> Result<()> {
+        let query = self.query.as_ref().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
                 "Not connected. Call connect() first.",
             ))
@@ -356,17 +387,11 @@ impl ClaudeSdkClient {
 
     /// Rewinds file changes to a specific user message checkpoint.
     ///
-    /// Requires `enable_file_checkpointing` to be set in [`ClaudeAgentOptions`].
-    ///
-    /// # Arguments
-    ///
-    /// * `user_message_id` — The UUID of the user message to rewind to.
-    ///
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
-    pub async fn rewind_files(&mut self, user_message_id: &str) -> Result<()> {
-        let query = self.query.as_mut().ok_or_else(|| {
+    pub async fn rewind_files(&self, user_message_id: &str) -> Result<()> {
+        let query = self.query.as_ref().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
                 "Not connected. Call connect() first.",
             ))
@@ -376,13 +401,11 @@ impl ClaudeSdkClient {
 
     /// Queries the status of connected MCP servers.
     ///
-    /// Returns a JSON value with the current status of all configured MCP servers.
-    ///
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
-    pub async fn get_mcp_status(&mut self) -> Result<Value> {
-        let query = self.query.as_mut().ok_or_else(|| {
+    pub async fn get_mcp_status(&self) -> Result<Value> {
+        let query = self.query.as_ref().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
                 "Not connected. Call connect() first.",
             ))
@@ -391,9 +414,6 @@ impl ClaudeSdkClient {
     }
 
     /// Returns the server initialization response, if available.
-    ///
-    /// The initialization result contains server capabilities and configuration
-    /// details returned during the handshake.
     ///
     /// # Errors
     ///
@@ -410,15 +430,9 @@ impl ClaudeSdkClient {
     /// Disconnects from the Claude Code CLI and closes the session.
     ///
     /// After disconnecting, the client can be reconnected with [`connect()`](Self::connect).
-    /// If a custom transport was provided, it is recovered and can be reused on
-    /// the next [`connect()`](Self::connect) call.
     pub async fn disconnect(&mut self) -> Result<()> {
         if let Some(query) = self.query.take() {
-            let transport = query.close_and_take_transport().await?;
-            // Recover the custom transport so it can be reused on reconnect.
-            if self.has_custom_transport {
-                self.custom_transport = Some(transport);
-            }
+            query.close().await?;
         }
         Ok(())
     }
