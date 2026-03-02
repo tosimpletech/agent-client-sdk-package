@@ -20,22 +20,39 @@ const RUST_SDK_ORIGINATOR: &str = "codex_sdk_rust";
 /// Arguments used by [`CodexExec::run`].
 #[derive(Debug, Clone, Default)]
 pub struct CodexExecArgs {
+    /// Prompt text passed to Codex via stdin.
     pub input: String,
+    /// Optional `OPENAI_BASE_URL` override.
     pub base_url: Option<String>,
+    /// Optional `CODEX_API_KEY` override.
     pub api_key: Option<String>,
+    /// Existing thread id to resume. When set, `resume <thread_id>` is added.
     pub thread_id: Option<String>,
+    /// Local image paths passed via repeated `--image` flags.
     pub images: Vec<String>,
+    /// Model override passed as `--model`.
     pub model: Option<String>,
+    /// Sandbox mode passed as `--sandbox`.
     pub sandbox_mode: Option<SandboxMode>,
+    /// Working directory passed as `--cd`.
     pub working_directory: Option<String>,
+    /// Additional directories passed as repeated `--add-dir` flags.
     pub additional_directories: Vec<String>,
+    /// Whether to append `--skip-git-repo-check`.
     pub skip_git_repo_check: bool,
+    /// Path passed to `--output-schema`.
     pub output_schema_file: Option<String>,
+    /// Model reasoning effort translated to a `--config` override.
     pub model_reasoning_effort: Option<ModelReasoningEffort>,
+    /// Network access override translated to a `--config` entry.
     pub network_access_enabled: Option<bool>,
+    /// Explicit web search mode translated to a `--config` entry.
     pub web_search_mode: Option<WebSearchMode>,
+    /// Legacy boolean web search toggle used when `web_search_mode` is absent.
     pub web_search_enabled: Option<bool>,
+    /// Approval policy translated to a `--config` entry.
     pub approval_policy: Option<ApprovalMode>,
+    /// Optional cancellation token that aborts the running subprocess.
     pub cancellation_token: Option<CancellationToken>,
 }
 
@@ -48,6 +65,10 @@ pub struct CodexExec {
 }
 
 impl CodexExec {
+    /// Creates a Codex subprocess runner.
+    ///
+    /// When `executable_path_override` is not supplied, the executable is
+    /// discovered from standard local and global install locations.
     pub fn new(
         executable_path_override: Option<String>,
         env_override: Option<HashMap<String, String>>,
@@ -65,6 +86,12 @@ impl CodexExec {
         })
     }
 
+    /// Runs one `codex exec --experimental-json` invocation and returns a stream
+    /// of stdout JSONL lines.
+    ///
+    /// The returned stream yields lines as they arrive and finishes only after
+    /// the subprocess exits successfully. Non-zero exit status is returned as
+    /// [`Error::Process`].
     pub async fn run(&self, args: CodexExecArgs) -> Result<BoxStream<'static, Result<String>>> {
         if args
             .cancellation_token

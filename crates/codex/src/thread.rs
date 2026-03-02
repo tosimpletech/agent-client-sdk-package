@@ -17,14 +17,24 @@ use crate::turn_options::TurnOptions;
 /// Structured user input for multimodal turns.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserInput {
-    Text { text: String },
-    LocalImage { path: PathBuf },
+    /// Plain text segment appended to the prompt.
+    Text {
+        /// Text content included in the prompt.
+        text: String,
+    },
+    /// Local image path passed to Codex via `--image`.
+    LocalImage {
+        /// Path to a local image file.
+        path: PathBuf,
+    },
 }
 
 /// Input accepted by [`Thread::run`] / [`Thread::run_streamed`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
+    /// Single text prompt.
     Text(String),
+    /// Ordered multimodal entries.
     Entries(Vec<UserInput>),
 }
 
@@ -49,8 +59,11 @@ impl From<Vec<UserInput>> for Input {
 /// Completed turn.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Turn {
+    /// Completed items emitted during the turn.
     pub items: Vec<ThreadItem>,
+    /// Final assistant response text from the latest `agent_message` item.
     pub final_response: String,
+    /// Token usage when reported by the CLI.
     pub usage: Option<Usage>,
 }
 
@@ -62,6 +75,7 @@ pub type ThreadEventStream = Pin<Box<dyn Stream<Item = Result<ThreadEvent>> + Se
 
 /// Result of [`Thread::run_streamed`].
 pub struct RunStreamedResult {
+    /// Event stream for the current turn.
     pub events: ThreadEventStream,
 }
 

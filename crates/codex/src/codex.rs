@@ -12,6 +12,10 @@ pub struct Codex {
 }
 
 impl Codex {
+    /// Creates a new Codex client.
+    ///
+    /// When `options` is `None`, default options are used and the SDK attempts
+    /// to discover the `codex` executable automatically.
     pub fn new(options: Option<CodexOptions>) -> Result<Self> {
         let options = options.unwrap_or_default();
         let exec = CodexExec::new(
