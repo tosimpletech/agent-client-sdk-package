@@ -4,6 +4,25 @@
 
 通过类型化 Rust API 将 Claude Code 以子进程方式集成到应用中。
 
+## 目录
+
+- [概览](#概览)
+- [状态](#状态)
+- [安装](#安装)
+- [认证与环境配置](#认证与环境配置)
+- [快速开始](#快速开始)
+- [API 选型指南](#api-选型指南)
+- [核心 API](#核心-api)
+- [关键实现点](#关键实现点)
+- [与官方 Python SDK 的特性对比](#与官方-python-sdk-的特性对比)
+- [兼容性矩阵](#兼容性矩阵)
+- [已知限制](#已知限制)
+- [测试与验证](#测试与验证)
+- [并发模型](#并发模型)
+- [开发](#开发)
+- [贡献](#贡献)
+- [许可证](#许可证)
+
 ## 概览
 
 该 crate 是一个以能力对齐为目标的 Rust 实现，语义上与 Python Claude Agent SDK 保持一致。
@@ -18,6 +37,7 @@
 
 ## 状态
 
+- 版本：`0.1.0`（`claude-code-client-sdk`）
 - 范围：覆盖 Python SDK 核心工作流的对齐实现
 - 验证：包含对齐测试与 subprocess/e2e 风格测试
 - 文档：公开 API 已通过 `claude_code` 导出并附带文档
@@ -35,6 +55,38 @@ claude_code = { package = "claude-code-client-sdk", path = "../../crates/claude-
 
 - Rust 1.85+（edition 2024）
 - 运行环境可访问 Claude Code CLI
+
+## 认证与环境配置
+
+该 SDK 本质上是调用 Claude Code CLI。认证可来自 CLI 已登录状态，或通过环境变量传递给 CLI 进程。
+
+### 方式 A：环境变量
+
+```bash
+# Claude 工具链常用密钥环境变量示例
+export ANTHROPIC_API_KEY="<your_api_key>"
+```
+
+### 方式 B：在客户端配置中传入环境变量
+
+```rust,no_run
+use std::collections::HashMap;
+use claude_code::{ClaudeAgentOptions, ClaudeSdkClient};
+
+# fn example() {
+let mut env = HashMap::new();
+env.insert("ANTHROPIC_API_KEY".to_string(), "<your_api_key>".to_string());
+
+let options = ClaudeAgentOptions {
+    env,
+    ..Default::default()
+};
+
+let _client = ClaudeSdkClient::new(Some(options), None);
+# }
+```
+
+安全提示：不要将密钥硬编码或提交到代码仓库。
 
 ## 快速开始
 
@@ -92,6 +144,15 @@ client.disconnect().await?;
 # }
 ```
 
+## API 选型指南
+
+| 场景 | 推荐 API | 原因 |
+| --- | --- | --- |
+| 一次请求并收集全部消息 | `query` | 最简单的一次性调用 |
+| 一次请求并增量消费输出 | `query_stream` | 边到边处理消息 |
+| 一次请求但输入本身是流 | `query_from_stream` / `query_stream_from_stream` | 对应 Python AsyncIterable 场景 |
+| 需要多轮会话与中断控制 | `ClaudeSdkClient` | 显式 connect/query/receive/interrupt 生命周期 |
+
 ## 核心 API
 
 - 一次性查询 API
@@ -123,6 +184,36 @@ client.disconnect().await?;
 - 回调协议支持（`can_use_tool`、hooks）
 - 面向进程内工具调用的 SDK MCP 路由
 - 使用 `TransportFactory` 时支持断开后重连
+
+## 与官方 Python SDK 的特性对比
+
+| 特性 | 官方 Python SDK | 本 Rust SDK | 说明 |
+| --- | --- | --- | --- |
+| 一次性查询 API | ✅ | ✅ | `query` 核心语义对齐 |
+| 流输入支持 | ✅（`AsyncIterable`） | ✅（`Stream<Item = Value>`） | Rust 异步流等价形态 |
+| 流输出支持 | ✅ | ✅ | `query_stream` / `query_stream_from_stream` |
+| 会话客户端 | ✅（`ClaudeSDKClient`） | ✅（`ClaudeSdkClient`） | connect/query/receive/interrupt 生命周期 |
+| Hook 回调 | ✅ | ✅ | 核心回调协议已覆盖 |
+| 工具权限回调（`can_use_tool`） | ✅ | ✅ | 含上下文与结果类型转换 |
+| SDK MCP 集成 | ✅ | ✅（核心子集） | 支持进程内 server 路由 |
+| 运行时模型 | Python async runtimes | Tokio | 语言生态差异 |
+| E2E 对齐广度 | ✅ | ⚠️ 对齐优先子集 | 当前重点是核心行为与协议链路 |
+
+## 兼容性矩阵
+
+| 组件 | 要求 / 说明 |
+| --- | --- |
+| Rust | `1.85+` |
+| Edition | `2024` |
+| Claude Code CLI | 运行时必需 |
+| Runtime | Tokio 异步运行时 |
+| 操作系统 | 依赖 CLI 支持矩阵 |
+
+## 已知限制
+
+- SDK 依赖外部 CLI，最终行为会受安装的 CLI 版本影响。
+- E2E 覆盖为对齐优先，并未复制全部上游集成场景。
+- 认证/部署细节由底层 CLI 管理，不由本 crate 直接实现。
 
 ## 测试与验证
 
@@ -156,18 +247,23 @@ cargo clippy -p claude-code-client-sdk --all-targets --all-features -- -D warnin
 - 一次性流式 API 返回 `Send` 流
 - `ClaudeSdkClient` 连接后支持并发控制/查询调用（`&self` 方法）
 
-## 与 Python SDK 的差异
-
-| 维度 | Python SDK | Rust SDK |
-| --- | --- | --- |
-| 一次性流式接口 | async iterables | `futures::Stream`（`BoxStream`） |
-| 运行时模型 | Python async runtimes | Tokio |
-| 客户端流输入连接 | `connect(AsyncIterable)` | `connect_with_messages(Stream<Item = Value>)` |
-| 传输对象模型 | 动态协议对象 | 强类型 Rust enum/struct |
-
 ## 开发
 
 ```bash
 cargo test -p claude-code-client-sdk
 cargo clippy -p claude-code-client-sdk --all-targets --all-features -- -D warnings
 ```
+
+## 贡献
+
+欢迎提交 PR。提交前请执行：
+
+```bash
+cargo fmt
+cargo clippy -p claude-code-client-sdk --all-targets --all-features -- -D warnings
+cargo test -p claude-code-client-sdk
+```
+
+## 许可证
+
+当前仓库尚未声明许可证信息。对外发布前建议在仓库根目录补充 `LICENSE` 文件。

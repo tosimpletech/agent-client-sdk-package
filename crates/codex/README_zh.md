@@ -4,6 +4,25 @@
 
 通过 `codex` CLI（`codex exec --experimental-json`）的 JSONL 通道，将 Codex agent 以 Rust SDK 方式集成到应用中。
 
+## 目录
+
+- [概览](#概览)
+- [状态](#状态)
+- [安装](#安装)
+- [认证与环境配置](#认证与环境配置)
+- [快速开始](#快速开始)
+- [API 选型指南](#api-选型指南)
+- [核心 API](#核心-api)
+- [关键实现点](#关键实现点)
+- [与官方 TypeScript SDK 的特性对比](#与官方-typescript-sdk-的特性对比)
+- [兼容性矩阵](#兼容性矩阵)
+- [已知限制](#已知限制)
+- [测试与验证](#测试与验证)
+- [并发模型](#并发模型)
+- [开发](#开发)
+- [贡献](#贡献)
+- [许可证](#许可证)
+
 ## 概览
 
 该 crate 是一个以能力对齐为目标的 Rust 实现，语义上与官方 Codex TypeScript SDK 保持一致。
@@ -19,6 +38,7 @@
 
 ## 状态
 
+- 版本：`0.1.0`（`codex-client-sdk`）
 - 范围：覆盖 Codex 核心工作流的对齐实现
 - 验证：测试通过（`cargo test -p codex-client-sdk`）
 - 文档：公开 API 已补齐 rustdoc，并可通过 `missing_docs` 检查
@@ -36,6 +56,36 @@ codex = { package = "codex-client-sdk", path = "../../crates/codex" }
 
 - Rust 1.85+（edition 2024）
 - 已安装并可访问 Codex CLI（`codex`，通常来自 `@openai/codex`）
+
+## 认证与环境配置
+
+该 SDK 本质上是调用外部 Codex CLI。认证配置可通过环境变量或 `CodexOptions` 提供。
+
+### 方式 A：环境变量
+
+```bash
+export CODEX_API_KEY="<your_api_key>"
+# 可选：覆盖接口地址
+export OPENAI_BASE_URL="https://api.openai.com/v1"
+```
+
+### 方式 B：代码中覆盖
+
+```rust,no_run
+use codex::{Codex, CodexOptions};
+
+# fn example() -> codex::Result<()> {
+let codex = Codex::new(Some(CodexOptions {
+    api_key: Some("<your_api_key>".to_string()),
+    base_url: Some("https://api.openai.com/v1".to_string()),
+    ..Default::default()
+}))?;
+# let _ = codex;
+# Ok(())
+# }
+```
+
+安全提示：不要将密钥硬编码或提交到代码仓库。
 
 ## 快速开始
 
@@ -128,6 +178,15 @@ println!("{}", turn.final_response);
 # }
 ```
 
+## API 选型指南
+
+| 场景 | 推荐 API | 原因 |
+| --- | --- | --- |
+| 只关心最终结果 | `Thread::run` | 直接返回 `Turn`，调用简单 |
+| 需要实时进度/工具/文件变化 | `Thread::run_streamed` | 流式返回类型化事件 |
+| 按线程 ID 继续对话 | `Codex::resume_thread` + `run`/`run_streamed` | 恢复上下文 |
+| 一次输入文本+图片 | `Input::Entries(Vec<UserInput>)` | 与 CLI `--image` 语义一致 |
+
 ## 核心 API
 
 - `Codex`
@@ -160,6 +219,37 @@ println!("{}", turn.final_response);
 - `config` 对象可展开为重复的 TOML 兼容 `--config` 参数
 - 对重叠选项有明确优先级（例如 `web_search_mode` 高于 `web_search_enabled`）
 
+## 与官方 TypeScript SDK 的特性对比
+
+| 特性 | 官方 TypeScript SDK | 本 Rust SDK | 说明 |
+| --- | --- | --- | --- |
+| 新建/恢复线程 | ✅ | ✅ | `startThread` / `resumeThread` 对应 `start_thread` / `resume_thread` |
+| 缓冲式回合 API | ✅（`run`） | ✅（`run`） | 高层语义一致 |
+| 流式回合 API | ✅（`runStreamed`） | ✅（`run_streamed`） | Rust 返回 `futures::Stream` |
+| 结构化输出 | ✅ | ✅ | Rust 侧传入 `serde_json::Value` schema |
+| 多模态输入（文本+本地图） | ✅ | ✅ | `Input::Entries` + `UserInput::LocalImage` |
+| 取消机制 | ✅（`AbortSignal`） | ✅（`CancellationToken`） | Rust 风格原语 |
+| 环境变量覆盖 | ✅ | ✅ | `CodexOptions.env` |
+| `--config` 展平透传 | ✅ | ✅ | TOML 兼容序列化 |
+| 内建 schema 辅助集成（如 Zod） | ✅（生态常见） | ⚠️ 手工 | Rust 需直接传 JSON Schema |
+| 核心外生态功能覆盖 | ✅ | ⚠️ 核心对齐优先 | 当前 crate 聚焦核心工作流 |
+
+## 兼容性矩阵
+
+| 组件 | 要求 / 说明 |
+| --- | --- |
+| Rust | `1.85+` |
+| Edition | `2024` |
+| Codex CLI | 必需（通常通过 `@openai/codex` 安装） |
+| Runtime | Tokio 异步运行时 |
+| 操作系统 | 依赖 Codex CLI 支持矩阵 |
+
+## 已知限制
+
+- SDK 依赖外部 CLI，最终行为会受安装的 CLI 版本影响。
+- 不提供内建 JSON Schema 构建器；请直接传入 `serde_json::Value`。
+- 当前测试以协议/模拟链路为主，不包含完整 live-model 矩阵测试。
+
 ## 测试与验证
 
 参考对齐映射（TypeScript -> Rust）：
@@ -182,18 +272,23 @@ cargo test -p codex-client-sdk
 - `run()` 通过消费事件流构建最终 `Turn`
 - 取消机制基于 `tokio_util::sync::CancellationToken`
 
-## 与 TypeScript SDK 的差异
-
-| 维度 | TypeScript SDK | Rust SDK |
-| --- | --- | --- |
-| 流式返回类型 | `AsyncGenerator<ThreadEvent>` | `Stream<Item = Result<ThreadEvent>>` |
-| 取消原语 | `AbortSignal` | `CancellationToken` |
-| 输入形态 | `string | UserInput[]` | `Input` enum |
-| 线程 ID 访问 | `thread.id` getter | `thread.id()` method |
-
 ## 开发
 
 ```bash
 cargo test -p codex-client-sdk
 cargo clippy -p codex-client-sdk --all-targets --all-features -- -D warnings
 ```
+
+## 贡献
+
+欢迎提交 PR。提交前请执行：
+
+```bash
+cargo fmt
+cargo clippy -p codex-client-sdk --all-targets --all-features -- -D warnings
+cargo test -p codex-client-sdk
+```
+
+## 许可证
+
+当前仓库尚未声明许可证信息。对外发布前建议在仓库根目录补充 `LICENSE` 文件。

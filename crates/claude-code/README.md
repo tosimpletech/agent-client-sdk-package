@@ -4,6 +4,25 @@
 
 Rust SDK for integrating Claude Code as a subprocess and interacting with it through typed Rust APIs.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Status](#status)
+- [Installation](#installation)
+- [Authentication and Environment Setup](#authentication-and-environment-setup)
+- [Quickstart](#quickstart)
+- [API Selection Guide](#api-selection-guide)
+- [Core API Surface](#core-api-surface)
+- [Feature Highlights](#feature-highlights)
+- [Feature Comparison with Official Python SDK](#feature-comparison-with-official-python-sdk)
+- [Compatibility Matrix](#compatibility-matrix)
+- [Known Limitations](#known-limitations)
+- [Testing and Validation](#testing-and-validation)
+- [Concurrency Model](#concurrency-model)
+- [Development](#development)
+- [Contributing](#contributing)
+- [License](#license)
+
 ## Overview
 
 This crate is a parity-focused Rust implementation aligned with the Python Claude Agent SDK semantics.
@@ -18,6 +37,7 @@ It supports:
 
 ## Status
 
+- Package version: `0.1.0` (`claude-code-client-sdk`)
 - Scope: parity-focused implementation of the core Python SDK workflow
 - Validation: parity-focused test suite and subprocess/e2e-style coverage in this crate
 - Rust docs: public API is documented and exported through `claude_code`
@@ -35,6 +55,38 @@ Runtime prerequisites:
 
 - Rust 1.85+ (edition 2024)
 - Claude Code CLI installed and accessible in the runtime environment
+
+## Authentication and Environment Setup
+
+This SDK invokes the Claude Code CLI. Authentication can come from existing CLI login/session or environment variables passed to the process.
+
+### Option A: environment variables
+
+```bash
+# Example provider key variable used by Claude tooling
+export ANTHROPIC_API_KEY="<your_api_key>"
+```
+
+### Option B: per-client environment overrides
+
+```rust,no_run
+use std::collections::HashMap;
+use claude_code::{ClaudeAgentOptions, ClaudeSdkClient};
+
+# fn example() {
+let mut env = HashMap::new();
+env.insert("ANTHROPIC_API_KEY".to_string(), "<your_api_key>".to_string());
+
+let options = ClaudeAgentOptions {
+    env,
+    ..Default::default()
+};
+
+let _client = ClaudeSdkClient::new(Some(options), None);
+# }
+```
+
+Security note: do not hard-code or commit secrets to source control.
 
 ## Quickstart
 
@@ -92,6 +144,15 @@ client.disconnect().await?;
 # }
 ```
 
+## API Selection Guide
+
+| Use case | Recommended API | Why |
+| --- | --- | --- |
+| One-off request, collect all messages | `query` | Simplest single-call API |
+| One-off request, consume incrementally | `query_stream` | Stream responses as they arrive |
+| Stream input messages to one-off query | `query_from_stream` / `query_stream_from_stream` | Rust equivalent of async iterable input |
+| Multi-turn conversation with session control | `ClaudeSdkClient` | Explicit connect/query/receive/interrupt lifecycle |
+
 ## Core API Surface
 
 - One-shot APIs
@@ -123,6 +184,36 @@ client.disconnect().await?;
 - Callback protocol support (`can_use_tool`, hooks)
 - SDK MCP server routing for in-process tool invocation
 - Reconnect-capable client flow when used with a `TransportFactory`
+
+## Feature Comparison with Official Python SDK
+
+| Feature | Official Python SDK | This Rust SDK | Notes |
+| --- | --- | --- | --- |
+| One-shot query API | ✅ | ✅ | `query` parity for core workflow |
+| Stream input support | ✅ (`AsyncIterable`) | ✅ (`Stream<Item = Value>`) | Rust-idiomatic streaming input |
+| Stream output support | ✅ | ✅ | `query_stream` / `query_stream_from_stream` |
+| Session client | ✅ (`ClaudeSDKClient`) | ✅ (`ClaudeSdkClient`) | Connect/query/receive/interrupt lifecycle |
+| Hook callbacks | ✅ | ✅ | Core hook callback protocol covered |
+| Tool permission callback (`can_use_tool`) | ✅ | ✅ | Includes typed context/result conversion |
+| SDK MCP integration | ✅ | ✅ (core subset) | In-process server routing supported |
+| Runtime model | Python async runtimes | Tokio | Runtime model differs by language |
+| End-to-end parity breadth | ✅ | ⚠️ parity-focused subset | Current focus is core behavior + protocol/e2e mocks |
+
+## Compatibility Matrix
+
+| Component | Requirement / Notes |
+| --- | --- |
+| Rust | `1.85+` |
+| Edition | `2024` |
+| Claude Code CLI | Required in runtime environment |
+| Runtime | Tokio async runtime |
+| OS support | Follows CLI support matrix |
+
+## Known Limitations
+
+- SDK behavior depends on the installed Claude Code CLI version.
+- E2E coverage is parity-focused; not every upstream integration scenario is replicated.
+- CLI-specific auth/deployment flows are managed by the underlying CLI, not by this crate.
 
 ## Testing and Validation
 
@@ -156,18 +247,23 @@ cargo clippy -p claude-code-client-sdk --all-targets --all-features -- -D warnin
 - One-shot streaming APIs return `Send` streams
 - `ClaudeSdkClient` supports concurrent control/query calls after connection (`&self` methods)
 
-## Differences from Python SDK
-
-| Area | Python SDK | Rust SDK |
-| --- | --- | --- |
-| One-shot streaming | async iterables | `futures::Stream` (`BoxStream`) |
-| Runtime integration | Python async runtimes | Tokio-based |
-| Client prompt streaming | `connect(AsyncIterable)` | `connect_with_messages(Stream<Item = Value>)` |
-| Transport typing | dynamic protocol objects | strongly typed Rust enums/structs |
-
 ## Development
 
 ```bash
 cargo test -p claude-code-client-sdk
 cargo clippy -p claude-code-client-sdk --all-targets --all-features -- -D warnings
 ```
+
+## Contributing
+
+Pull requests are welcome. Before submitting, run:
+
+```bash
+cargo fmt
+cargo clippy -p claude-code-client-sdk --all-targets --all-features -- -D warnings
+cargo test -p claude-code-client-sdk
+```
+
+## License
+
+License information has not been declared in this repository yet. Add a root `LICENSE` file before external distribution.
