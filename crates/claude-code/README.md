@@ -274,4 +274,4 @@ cargo test -p claude-code-client-sdk
 
 ## License
 
-License information has not been declared in this repository yet. Add a root `LICENSE` file before external distribution.
+Licensed under the [Apache License, Version 2.0](../../LICENSE).

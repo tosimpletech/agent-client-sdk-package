@@ -297,4 +297,4 @@ cargo test -p codex-client-sdk
 
 ## 许可证
 
-当前仓库尚未声明许可证信息。对外发布前建议在仓库根目录补充 `LICENSE` 文件。
+本项目采用 [Apache License, Version 2.0](../../LICENSE) 许可。
