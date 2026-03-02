@@ -430,6 +430,36 @@ impl Query {
         Ok(())
     }
 
+    /// Spawns a background task that streams input messages to the CLI.
+    ///
+    /// This is useful for long-lived or unbounded input streams where the caller
+    /// should continue processing messages concurrently.
+    ///
+    /// The returned task completes when the input stream ends or a write error
+    /// occurs. It does not close stdin.
+    pub fn spawn_input_from_stream<S>(&self, mut messages: S) -> Result<JoinHandle<Result<()>>>
+    where
+        S: Stream<Item = Value> + Send + Unpin + 'static,
+    {
+        let state = self
+            .state
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| Error::Other("Query not started or already closed.".to_string()))?;
+
+        Ok(tokio::spawn(async move {
+            while let Some(message) = messages.next().await {
+                state
+                    .writer
+                    .lock()
+                    .await
+                    .write(&(message.to_string() + "\n"))
+                    .await?;
+            }
+            Ok(())
+        }))
+    }
+
     /// Streams multiple messages to the CLI and closes the input stream.
     ///
     /// If SDK MCP servers or hooks are present, stdin close is deferred until

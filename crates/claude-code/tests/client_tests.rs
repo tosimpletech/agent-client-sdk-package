@@ -13,7 +13,7 @@ use claude_code::{
 use futures::stream;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-use tokio::time::{Duration, sleep};
+use tokio::time::{Duration, sleep, timeout};
 
 #[derive(Default)]
 struct MockTransportState {
@@ -331,7 +331,10 @@ async fn test_double_connect() {
 #[tokio::test]
 async fn test_disconnect_without_connect() {
     let mut client = ClaudeSdkClient::new(None, None);
-    client.disconnect().await.expect("disconnect without connect");
+    client
+        .disconnect()
+        .await
+        .expect("disconnect without connect");
 }
 
 #[tokio::test]
@@ -349,7 +352,9 @@ async fn test_scope_cleanup_on_error() {
     let state = transport.state.clone();
 
     let client = ClaudeSdkClient::new_with_transport(None, Box::new(transport));
-    let err = run_and_fail(client).await.expect_err("scope must return error");
+    let err = run_and_fail(client)
+        .await
+        .expect_err("scope must return error");
     assert!(err.to_string().contains("scope error"));
 
     // Query::Drop closes transport asynchronously; give it a brief moment.
@@ -382,9 +387,18 @@ async fn test_connect_with_initial_messages() {
         .connect_with_messages(stream_prompt)
         .await
         .expect("connect with stream messages");
+    client
+        .wait_for_initial_messages()
+        .await
+        .expect("wait for initial stream completion");
 
     let state = state.lock().await;
-    assert!(state.written_messages.iter().any(|msg| msg.contains("\"content\":\"Hi\"")));
+    assert!(
+        state
+            .written_messages
+            .iter()
+            .any(|msg| msg.contains("\"content\":\"Hi\""))
+    );
     assert!(
         state
             .written_messages
@@ -392,6 +406,28 @@ async fn test_connect_with_initial_messages() {
             .any(|msg| msg.contains("\"content\":\"Bye\""))
     );
     assert_eq!(state.end_input_calls, 0);
+}
+
+#[tokio::test]
+async fn test_connect_with_messages_is_non_blocking_for_pending_stream() {
+    let transport = MockTransport::with_messages(vec![json!({
+        "type": "control_response",
+        "response": {"subtype": "success", "request_id": "req_1", "response": {}}
+    })]);
+    let mut client = ClaudeSdkClient::new_with_transport(None, Box::new(transport));
+
+    timeout(
+        Duration::from_millis(100),
+        client.connect_with_messages(stream::pending::<Value>()),
+    )
+    .await
+    .expect("connect_with_messages should return without waiting for pending stream")
+    .expect("connect_with_messages should succeed");
+
+    timeout(Duration::from_millis(100), client.disconnect())
+        .await
+        .expect("disconnect should not block on pending initial stream")
+        .expect("disconnect should succeed");
 }
 
 #[tokio::test]
@@ -625,7 +661,10 @@ async fn test_concurrent_send_receive() {
     let send_task = tokio::spawn(async move {
         let client = send_client.lock().await;
         client
-            .query(InputPrompt::Text("Question 1".to_string()), "concurrent-session")
+            .query(
+                InputPrompt::Text("Question 1".to_string()),
+                "concurrent-session",
+            )
             .await
             .expect("query");
     });
@@ -731,7 +770,10 @@ async fn test_client_with_full_options() {
     let mut client = ClaudeSdkClient::new_with_transport(Some(options), Box::new(transport));
     client.connect(None).await.expect("connect");
     client
-        .query(InputPrompt::Text("Test full options".to_string()), "opts-session")
+        .query(
+            InputPrompt::Text("Test full options".to_string()),
+            "opts-session",
+        )
         .await
         .expect("query");
 

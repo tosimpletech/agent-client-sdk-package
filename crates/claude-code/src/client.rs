@@ -12,6 +12,8 @@ use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 use serde_json::Value;
+use tokio::task::JoinHandle;
+use tracing::warn;
 
 use crate::errors::{CLIConnectionError, Error, Result};
 use crate::query::{Query, build_hooks_config};
@@ -74,6 +76,7 @@ pub struct ClaudeSdkClient {
     options: ClaudeAgentOptions,
     transport_factory: Option<Box<dyn TransportFactory>>,
     query: Option<Query>,
+    initial_message_stream_task: Option<JoinHandle<Result<()>>>,
 }
 
 /// Adapter that wraps a single pre-built transport instance as a one-shot factory.
@@ -113,6 +116,7 @@ impl ClaudeSdkClient {
             options: options.unwrap_or_default(),
             transport_factory,
             query: None,
+            initial_message_stream_task: None,
         }
     }
 
@@ -132,6 +136,42 @@ impl ClaudeSdkClient {
                 Some(transport),
             )))),
             query: None,
+            initial_message_stream_task: None,
+        }
+    }
+
+    async fn handle_initial_message_stream_task(&mut self, abort_running: bool) -> Result<()> {
+        let Some(task) = self.initial_message_stream_task.take() else {
+            return Ok(());
+        };
+
+        if abort_running && !task.is_finished() {
+            task.abort();
+        }
+
+        match task.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(err)) => {
+                if abort_running {
+                    warn!("Initial message stream task ended with error during shutdown: {err}");
+                    Ok(())
+                } else {
+                    Err(err)
+                }
+            }
+            Err(join_err) => {
+                if join_err.is_cancelled() {
+                    Ok(())
+                } else {
+                    let message = format!("Initial message stream task panicked: {join_err}");
+                    if abort_running {
+                        warn!("{message}");
+                        Ok(())
+                    } else {
+                        Err(Error::Other(message))
+                    }
+                }
+            }
         }
     }
 
@@ -172,6 +212,8 @@ impl ClaudeSdkClient {
     /// - `can_use_tool` is set alongside `permission_prompt_tool_name`
     /// - The subprocess fails to start
     pub async fn connect(&mut self, prompt: Option<InputPrompt>) -> Result<()> {
+        self.handle_initial_message_stream_task(true).await?;
+
         if self.query.is_some() {
             self.disconnect().await?;
         }
@@ -241,16 +283,21 @@ impl ClaudeSdkClient {
     /// Establishes a connection and sends initial prompt messages from a stream.
     ///
     /// This is a Rust-idiomatic equivalent of Python SDK `connect(AsyncIterable)`.
-    /// Unlike one-off query streaming helpers, this keeps stdin open so the session
-    /// can continue with follow-up [`query()`](Self::query) calls.
+    /// The stream is consumed in a background task so this method returns once
+    /// connection is established. Unlike one-off query streaming helpers, this
+    /// keeps stdin open so the session can continue with follow-up
+    /// [`query()`](Self::query) calls.
+    ///
+    /// To synchronously wait for stream completion and surface stream write
+    /// errors, call [`wait_for_initial_messages()`](Self::wait_for_initial_messages).
     ///
     /// # Errors
     ///
-    /// Returns the same errors as [`connect()`](Self::connect), plus any write
-    /// errors while streaming the initial messages.
+    /// Returns the same errors as [`connect()`](Self::connect), plus errors
+    /// when starting the background stream task.
     pub async fn connect_with_messages<S>(&mut self, prompt: S) -> Result<()>
     where
-        S: Stream<Item = Value> + Unpin,
+        S: Stream<Item = Value> + Send + Unpin + 'static,
     {
         self.connect(None).await?;
 
@@ -260,7 +307,16 @@ impl ClaudeSdkClient {
             ))
         })?;
 
-        query.send_input_from_stream(prompt).await
+        self.initial_message_stream_task = Some(query.spawn_input_from_stream(prompt)?);
+        Ok(())
+    }
+
+    /// Waits for completion of the initial background message stream task.
+    ///
+    /// This is only relevant after calling [`connect_with_messages()`](Self::connect_with_messages).
+    /// If no background stream is active, this returns immediately.
+    pub async fn wait_for_initial_messages(&mut self) -> Result<()> {
+        self.handle_initial_message_stream_task(false).await
     }
 
     /// Sends a query within the current session.
@@ -454,9 +510,18 @@ impl ClaudeSdkClient {
     ///
     /// After disconnecting, the client can be reconnected with [`connect()`](Self::connect).
     pub async fn disconnect(&mut self) -> Result<()> {
+        self.handle_initial_message_stream_task(true).await?;
         if let Some(query) = self.query.take() {
             query.close().await?;
         }
         Ok(())
+    }
+}
+
+impl Drop for ClaudeSdkClient {
+    fn drop(&mut self) {
+        if let Some(task) = self.initial_message_stream_task.take() {
+            task.abort();
+        }
     }
 }
