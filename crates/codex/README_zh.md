@@ -2,42 +2,42 @@
 
 [English](README.md) | [中文](README_zh.md)
 
-Rust SDK for embedding the Codex agent in applications by driving the `codex` CLI over JSONL (`codex exec --experimental-json`).
+通过 `codex` CLI（`codex exec --experimental-json`）的 JSONL 通道，将 Codex agent 以 Rust SDK 方式集成到应用中。
 
-## Overview
+## 概览
 
-This crate is a parity-focused Rust implementation aligned with the official Codex TypeScript SDK semantics.
+该 crate 是一个以能力对齐为目标的 Rust 实现，语义上与官方 Codex TypeScript SDK 保持一致。
 
-It supports:
+支持能力：
 
-- Thread-based multi-turn workflows (`start_thread`, `resume_thread`)
-- Buffered and streamed turn execution (`run`, `run_streamed`)
-- Structured output via JSON Schema (`--output-schema`)
-- Multimodal input (text + local images)
-- Cancellation and thread resume
-- CLI config/env forwarding (`--config`, API endpoint/key, sandbox/approval/web-search settings)
+- 基于线程的多轮会话（`start_thread`、`resume_thread`）
+- 缓冲与流式两种执行方式（`run`、`run_streamed`）
+- 基于 JSON Schema 的结构化输出（`--output-schema`）
+- 多模态输入（文本 + 本地图片）
+- 取消机制与线程恢复
+- CLI 配置与环境透传（`--config`、API 地址/密钥、sandbox/approval/web-search）
 
-## Status
+## 状态
 
-- Scope: parity-focused SDK implementation for core Codex workflows
-- Validation: crate tests pass (`cargo test -p codex-client-sdk`)
-- Rust docs: public API is documented and checked with `missing_docs`
+- 范围：覆盖 Codex 核心工作流的对齐实现
+- 验证：测试通过（`cargo test -p codex-client-sdk`）
+- 文档：公开 API 已补齐 rustdoc，并可通过 `missing_docs` 检查
 
-## Installation
+## 安装
 
-This repository currently uses a workspace/local package layout.
+当前仓库采用 workspace / 本地路径依赖方式。
 
 ```toml
 [dependencies]
 codex = { package = "codex-client-sdk", path = "../../crates/codex" }
 ```
 
-Runtime prerequisites:
+运行前提：
 
-- Rust 1.85+ (edition 2024)
-- Codex CLI installed and available (`codex`), typically from `@openai/codex`
+- Rust 1.85+（edition 2024）
+- 已安装并可访问 Codex CLI（`codex`，通常来自 `@openai/codex`）
 
-## Quickstart
+## 快速开始
 
 ```rust,no_run
 use codex::Codex;
@@ -56,7 +56,7 @@ println!("items: {}", turn.items.len());
 # }
 ```
 
-### Continue the same conversation
+### 在同一线程继续对话
 
 ```rust,no_run
 # use codex::Codex;
@@ -70,7 +70,7 @@ println!("{}", second.final_response);
 # }
 ```
 
-### Stream events during a turn
+### 流式消费事件
 
 ```rust,no_run
 use codex::{Codex, ThreadEvent};
@@ -93,7 +93,7 @@ while let Some(event) = events.next().await {
 # }
 ```
 
-### Structured output
+### 结构化输出
 
 ```rust,no_run
 use codex::{Codex, TurnOptions};
@@ -128,7 +128,7 @@ println!("{}", turn.final_response);
 # }
 ```
 
-## Core API Surface
+## 核心 API
 
 - `Codex`
   - `new`
@@ -138,60 +138,60 @@ println!("{}", turn.final_response);
   - `id`
   - `run`
   - `run_streamed`
-- Input types
-  - `Input` (`Text`, `Entries`)
-  - `UserInput` (`Text`, `LocalImage`)
-- Options
+- 输入类型
+  - `Input`（`Text`、`Entries`）
+  - `UserInput`（`Text`、`LocalImage`）
+- 配置
   - `CodexOptions`
   - `ThreadOptions`
   - `TurnOptions`
-- Event/item models
-  - `ThreadEvent` + typed event payloads
-  - `ThreadItem` + typed item payloads
-- Low-level execution
+- 事件与条目模型
+  - `ThreadEvent` 及其类型化 payload
+  - `ThreadItem` 及其类型化 payload
+- 底层执行
   - `CodexExec`
   - `CodexExecArgs`
 
-## Feature Highlights
+## 关键实现点
 
-- Robust CLI binary discovery (PATH, local `node_modules`, vendor, common globals)
-- Typed event/item deserialization from JSONL stream
-- Output schema temp-file lifecycle managed automatically
-- Config object flattening to repeated TOML-compatible `--config` flags
-- Explicit precedence behavior for overlapping options (for example `web_search_mode` over `web_search_enabled`)
+- CLI 路径发现较健壮（PATH、本地 `node_modules`、vendor、常见全局目录）
+- JSONL 事件/条目均采用强类型反序列化
+- `--output-schema` 临时文件生命周期自动管理
+- `config` 对象可展开为重复的 TOML 兼容 `--config` 参数
+- 对重叠选项有明确优先级（例如 `web_search_mode` 高于 `web_search_enabled`）
 
-## Testing and Validation
+## 测试与验证
 
-Reference alignment coverage (TypeScript -> Rust):
+参考对齐映射（TypeScript -> Rust）：
 
 - `tests/run.test.ts` -> `tests/run_tests.rs`
 - `tests/runStreamed.test.ts` -> `tests/run_streamed_tests.rs`
 - `tests/exec.test.ts` -> `tests/exec_tests.rs`
 - `tests/abort.test.ts` -> `tests/abort_tests.rs`
 
-Validation commands:
+验证命令：
 
 ```bash
 RUSTDOCFLAGS='-Dwarnings -Dmissing_docs' cargo doc -p codex-client-sdk --no-deps
 cargo test -p codex-client-sdk
 ```
 
-## Concurrency Model
+## 并发模型
 
-- `run_streamed()` returns a `Send` stream of `ThreadEvent`
-- `run()` materializes a final `Turn` by consuming streamed events
-- Turn cancellation uses `tokio_util::sync::CancellationToken`
+- `run_streamed()` 返回 `Send` 的 `ThreadEvent` 流
+- `run()` 通过消费事件流构建最终 `Turn`
+- 取消机制基于 `tokio_util::sync::CancellationToken`
 
-## Differences from TypeScript SDK
+## 与 TypeScript SDK 的差异
 
-| Area | TypeScript SDK | Rust SDK |
+| 维度 | TypeScript SDK | Rust SDK |
 | --- | --- | --- |
-| Streaming return type | `AsyncGenerator<ThreadEvent>` | `Stream<Item = Result<ThreadEvent>>` |
-| Cancellation primitive | `AbortSignal` | `CancellationToken` |
-| Input shape | `string | UserInput[]` | `Input` enum |
-| Thread id access | `thread.id` getter | `thread.id()` method |
+| 流式返回类型 | `AsyncGenerator<ThreadEvent>` | `Stream<Item = Result<ThreadEvent>>` |
+| 取消原语 | `AbortSignal` | `CancellationToken` |
+| 输入形态 | `string | UserInput[]` | `Input` enum |
+| 线程 ID 访问 | `thread.id` getter | `thread.id()` method |
 
-## Development
+## 开发
 
 ```bash
 cargo test -p codex-client-sdk
