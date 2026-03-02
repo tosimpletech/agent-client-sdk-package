@@ -919,6 +919,7 @@ pub struct ToolAnnotations {
 /// | `agents` | Programmatically defined subagents |
 /// | `setting_sources` | Which filesystem settings to load |
 /// | `sandbox` | Sandbox configuration |
+/// | `strict_settings_merge` | Fail instead of warn when sandbox/settings JSON merge fails |
 /// | `plugins` | Local plugins to load |
 /// | `max_thinking_tokens` | *Deprecated:* use `thinking` instead |
 /// | `thinking` | Extended thinking configuration |
@@ -991,6 +992,9 @@ pub struct ClaudeAgentOptions {
     pub setting_sources: Option<Vec<SettingSource>>,
     /// Sandbox configuration for command execution isolation.
     pub sandbox: Option<SandboxSettings>,
+    /// When `true`, fail command construction if sandbox merge with `settings` fails.
+    /// When `false`, merge failures emit a warning and fallback to sandbox-only settings.
+    pub strict_settings_merge: bool,
     /// Local plugins to load.
     pub plugins: Vec<SdkPluginConfig>,
     /// *Deprecated:* Maximum tokens for thinking blocks. Use `thinking` instead.
@@ -1048,6 +1052,7 @@ impl Default for ClaudeAgentOptions {
             agents: None,
             setting_sources: None,
             sandbox: None,
+            strict_settings_merge: false,
             plugins: Vec::new(),
             max_thinking_tokens: None,
             thinking: None,

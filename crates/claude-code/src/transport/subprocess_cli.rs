@@ -404,32 +404,67 @@ impl SubprocessCliTransport {
         }
     }
 
+    fn parse_settings_object(
+        settings: &str,
+    ) -> std::result::Result<serde_json::Map<String, Value>, String> {
+        let settings_str = settings.trim();
+
+        if settings_str.starts_with('{') && settings_str.ends_with('}') {
+            let parsed: Value = serde_json::from_str(settings_str)
+                .map_err(|err| format!("Invalid settings JSON: {err}"))?;
+            return match parsed {
+                Value::Object(obj) => Ok(obj),
+                _ => Err("Settings JSON must be an object".to_string()),
+            };
+        }
+
+        let path = Path::new(settings_str);
+        if !path.exists() {
+            return Err(format!("Settings file does not exist: {settings_str}"));
+        }
+
+        let content = std::fs::read_to_string(path)
+            .map_err(|err| format!("Failed to read settings file '{settings_str}': {err}"))?;
+        let parsed: Value = serde_json::from_str(&content)
+            .map_err(|err| format!("Invalid JSON in settings file '{settings_str}': {err}"))?;
+        match parsed {
+            Value::Object(obj) => Ok(obj),
+            _ => Err(format!(
+                "Settings file '{settings_str}' must contain a JSON object"
+            )),
+        }
+    }
+
     /// Builds the combined settings value from `options.settings` and `options.sandbox`.
-    fn build_settings_value(&self) -> Option<String> {
+    fn build_settings_value(&self) -> Result<Option<String>> {
         let has_settings = self.options.settings.is_some();
         let has_sandbox = self.options.sandbox.is_some();
 
         if !has_settings && !has_sandbox {
-            return None;
+            return Ok(None);
         }
 
         if has_settings && !has_sandbox {
-            return self.options.settings.clone();
+            return Ok(self.options.settings.clone());
         }
 
         let mut settings_obj = serde_json::Map::new();
 
         if let Some(settings) = &self.options.settings {
-            let settings_str = settings.trim();
-            if settings_str.starts_with('{') && settings_str.ends_with('}') {
-                if let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(settings_str) {
+            match Self::parse_settings_object(settings) {
+                Ok(obj) => {
                     settings_obj = obj;
                 }
-            } else if Path::new(settings_str).exists()
-                && let Ok(content) = std::fs::read_to_string(settings_str)
-                && let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(&content)
-            {
-                settings_obj = obj;
+                Err(err) => {
+                    tracing::warn!(
+                        "Failed to merge settings into sandbox config: {err}. Falling back to sandbox-only settings."
+                    );
+                    if self.options.strict_settings_merge {
+                        return Err(Error::Other(format!(
+                            "Failed to merge settings into sandbox config: {err}"
+                        )));
+                    }
+                }
             }
         }
 
@@ -440,7 +475,7 @@ impl SubprocessCliTransport {
             );
         }
 
-        Some(Value::Object(settings_obj).to_string())
+        Ok(Some(Value::Object(settings_obj).to_string()))
     }
 
     /// Builds the complete command-line arguments for spawning the CLI process.
@@ -546,7 +581,7 @@ impl SubprocessCliTransport {
             cmd.push(resume.clone());
         }
 
-        if let Some(settings) = self.build_settings_value() {
+        if let Some(settings) = self.build_settings_value()? {
             cmd.push("--settings".to_string());
             cmd.push(settings);
         }
