@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use claude_code_client_sdk::{
+use claude_code::{
     HookMatcher, PermissionResult, PermissionResultAllow, PermissionResultDeny, Query, Result,
     ToolPermissionContext, Transport,
 };

@@ -22,8 +22,8 @@ use crate::errors::{
 };
 use crate::transport::Transport;
 use crate::types::{
-    ClaudeAgentOptions, McpServersOption, PermissionMode, SettingSource, SystemPrompt,
-    ThinkingConfig, ToolsOption,
+    ClaudeAgentOptions, McpServersOption, PermissionMode, SettingSource, StderrCallback,
+    SystemPrompt, ThinkingConfig, ToolsOption,
 };
 
 /// Default maximum buffer size for JSON stream parsing (1 MB).
@@ -148,6 +148,10 @@ pub struct SubprocessCliTransport {
     write_lock: Arc<Mutex<()>>,
     parser: JsonStreamBuffer,
     pending_messages: VecDeque<Value>,
+    /// Handle for the background task that drains stderr to prevent pipe blocking.
+    stderr_task: Option<tokio::task::JoinHandle<()>>,
+    /// Optional stderr callback to receive line output.
+    stderr_callback: Option<StderrCallback>,
 }
 
 impl SubprocessCliTransport {
@@ -167,6 +171,7 @@ impl SubprocessCliTransport {
 
         let cwd = options.cwd.clone();
         let max_buffer_size = options.max_buffer_size.unwrap_or(DEFAULT_MAX_BUFFER_SIZE);
+        let stderr_callback = options.stderr.clone();
 
         Ok(Self {
             prompt,
@@ -180,6 +185,8 @@ impl SubprocessCliTransport {
             write_lock: Arc::new(Mutex::new(())),
             parser: JsonStreamBuffer::new(max_buffer_size),
             pending_messages: VecDeque::new(),
+            stderr_task: None,
+            stderr_callback,
         })
     }
 
@@ -223,6 +230,29 @@ impl SubprocessCliTransport {
             "Claude Code not found. Install with:\n  npm install -g @anthropic-ai/claude-code\n\nIf already installed locally, try:\n  export PATH=\"$HOME/node_modules/.bin:$PATH\"\n\nOr provide the path via ClaudeAgentOptions",
             None,
         ))
+    }
+
+    /// Resolves a user identifier (username string or numeric UID) to a Unix UID.
+    ///
+    /// Supports both numeric UIDs (e.g., `"1000"`) and username strings (e.g., `"nobody"`).
+    #[cfg(unix)]
+    fn resolve_user_to_uid(user: &str) -> Result<u32> {
+        // Try parsing as numeric UID first.
+        if let Ok(uid) = user.parse::<u32>() {
+            return Ok(uid);
+        }
+        // Look up username via libc getpwnam.
+        use std::ffi::CString;
+        let c_user = CString::new(user).map_err(|_| {
+            Error::Other(format!("Invalid user name (contains null byte): {user}"))
+        })?;
+        // SAFETY: getpwnam is safe to call with a valid CString. We check the result for null.
+        let pw = unsafe { libc::getpwnam(c_user.as_ptr()) };
+        if pw.is_null() {
+            return Err(Error::Other(format!("User not found: {user}")));
+        }
+        // SAFETY: pw is non-null and points to a valid passwd struct.
+        Ok(unsafe { (*pw).pw_uid })
     }
 
     /// Converts a `PermissionMode` enum variant to its CLI string representation.
@@ -529,8 +559,18 @@ impl Transport for SubprocessCliTransport {
 
         command.env("CLAUDE_CODE_ENTRYPOINT", "sdk-rust");
         command.env("CLAUDE_AGENT_SDK_VERSION", env!("CARGO_PKG_VERSION"));
+        if self.options.enable_file_checkpointing {
+            command.env("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "true");
+        }
         for (key, value) in &self.options.env {
             command.env(key, value);
+        }
+
+        // Set subprocess user identity on Unix systems.
+        #[cfg(unix)]
+        if let Some(user) = &self.options.user {
+            let uid = Self::resolve_user_to_uid(user)?;
+            command.uid(uid);
         }
 
         let mut child = command.spawn().map_err(|e| {
@@ -554,6 +594,32 @@ impl Transport for SubprocessCliTransport {
 
         self.stdin = child.stdin.take();
         self.stdout = Some(BufReader::new(stdout));
+
+        // Spawn a background task to drain stderr and prevent pipe buffer blocking.
+        // The task reads all stderr output and optionally invokes the user's callback.
+        if let Some(stderr) = child.stderr.take() {
+            let callback = self.stderr_callback.clone();
+            self.stderr_task = Some(tokio::spawn(async move {
+                let mut reader = BufReader::new(stderr);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match reader.read_line(&mut line).await {
+                        Ok(0) => break, // EOF
+                        Ok(_) => {
+                            let trimmed = line.trim_end().to_string();
+                            if !trimmed.is_empty() {
+                                if let Some(cb) = &callback {
+                                    cb(trimmed);
+                                }
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }));
+        }
+
         self.child = Some(child);
         self.ready = true;
         Ok(())
@@ -663,6 +729,10 @@ impl Transport for SubprocessCliTransport {
             let _ = child.wait().await;
         }
         self.child = None;
+        // Abort the stderr drain task if still running.
+        if let Some(task) = self.stderr_task.take() {
+            task.abort();
+        }
         Ok(())
     }
 

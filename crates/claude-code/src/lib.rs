@@ -100,8 +100,8 @@ pub use types::{
     McpSdkServerConfig, McpServerConfig, McpServersOption, McpStdioServerConfig, Message,
     PermissionMode, PermissionResult, PermissionResultAllow, PermissionResultDeny,
     PermissionUpdate, ResultMessage, SandboxIgnoreViolations, SandboxNetworkConfig,
-    SandboxSettings, SdkPluginConfig, SettingSource, StreamEvent, SystemMessage, SystemPrompt,
-    SystemPromptPreset, TextBlock, ThinkingBlock, ThinkingConfig, ToolAnnotations,
+    SandboxSettings, SdkPluginConfig, SettingSource, StderrCallback, StreamEvent, SystemMessage,
+    SystemPrompt, SystemPromptPreset, TextBlock, ThinkingBlock, ThinkingConfig, ToolAnnotations,
     ToolPermissionContext, ToolResultBlock, ToolUseBlock, ToolsOption, ToolsPreset, UserContent,
     UserMessage,
 };

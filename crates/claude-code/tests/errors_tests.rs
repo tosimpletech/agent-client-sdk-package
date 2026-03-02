@@ -1,4 +1,4 @@
-use claude_code_client_sdk::{
+use claude_code::{
     CLIConnectionError, CLIJSONDecodeError, CLINotFoundError, ClaudeSDKError, ProcessError,
 };
 

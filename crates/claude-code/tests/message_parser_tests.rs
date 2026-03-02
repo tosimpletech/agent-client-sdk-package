@@ -1,4 +1,4 @@
-use claude_code_client_sdk::{ContentBlock, Message, parse_message};
+use claude_code::{ContentBlock, Message, parse_message};
 use serde_json::json;
 
 #[test]
@@ -10,7 +10,7 @@ fn test_parse_valid_user_message() {
     let message = parse_message(&data).expect("parse").expect("message");
     match message {
         Message::User(msg) => match msg.content {
-            claude_code_client_sdk::UserContent::Blocks(blocks) => {
+            claude_code::UserContent::Blocks(blocks) => {
                 assert_eq!(blocks.len(), 1);
                 match &blocks[0] {
                     ContentBlock::Text(block) => assert_eq!(block.text, "Hello"),
@@ -38,7 +38,7 @@ fn test_parse_user_message_with_uuid_and_tool_result() {
             assert_eq!(msg.tool_use_result, Some(json!({"filePath": "/tmp/a.py"})));
             assert_eq!(
                 msg.content,
-                claude_code_client_sdk::UserContent::Text("Simple string content".to_string())
+                claude_code::UserContent::Text("Simple string content".to_string())
             );
         }
         _ => panic!("expected user message"),
@@ -60,7 +60,7 @@ fn test_parse_user_message_with_mixed_blocks() {
     let message = parse_message(&data).expect("parse").expect("message");
     match message {
         Message::User(msg) => match msg.content {
-            claude_code_client_sdk::UserContent::Blocks(blocks) => {
+            claude_code::UserContent::Blocks(blocks) => {
                 assert_eq!(blocks.len(), 3);
                 assert!(matches!(&blocks[0], ContentBlock::Text(_)));
                 assert!(matches!(&blocks[1], ContentBlock::ToolUse(_)));

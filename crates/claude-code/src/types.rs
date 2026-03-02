@@ -1005,7 +1005,16 @@ pub struct ClaudeAgentOptions {
     /// Enable file change tracking for rewinding via
     /// [`ClaudeSdkClient::rewind_files()`](crate::ClaudeSdkClient::rewind_files).
     pub enable_file_checkpointing: bool,
+    /// Optional callback for stderr output lines from the CLI process.
+    ///
+    /// When set, stderr is piped and each non-empty line is passed to this callback.
+    /// When `None`, stderr is still drained to prevent subprocess blocking, but
+    /// lines are discarded.
+    pub stderr: Option<StderrCallback>,
 }
+
+/// Callback type for receiving stderr output lines from the CLI process.
+pub type StderrCallback = Arc<dyn Fn(String) + Send + Sync>;
 
 impl Default for ClaudeAgentOptions {
     fn default() -> Self {
@@ -1045,6 +1054,7 @@ impl Default for ClaudeAgentOptions {
             effort: None,
             output_format: None,
             enable_file_checkpointing: false,
+            stderr: None,
         }
     }
 }

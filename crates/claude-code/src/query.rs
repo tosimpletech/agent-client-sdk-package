@@ -15,6 +15,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
+use tracing::debug;
 
 use crate::errors::{Error, Result};
 use crate::message_parser::parse_message;
@@ -74,6 +75,12 @@ pub struct Query {
     initialized: bool,
     initialization_result: Option<Value>,
     initialize_timeout: Duration,
+    /// When true, stdin close is deferred until the first result message is received.
+    /// This is needed when hooks or SDK MCP servers are present, because the CLI may
+    /// send control requests that require writing responses back over stdin.
+    pending_stdin_close: bool,
+    /// Timeout for waiting for the first result before force-closing stdin.
+    stream_close_timeout: Duration,
 }
 
 impl Query {
@@ -97,6 +104,13 @@ impl Query {
         agents: Option<HashMap<String, AgentDefinition>>,
         initialize_timeout: Duration,
     ) -> Self {
+        let stream_close_timeout_ms: u64 = std::env::var("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60_000);
+        let stream_close_timeout =
+            Duration::from_millis(stream_close_timeout_ms).max(Duration::from_secs(60));
+
         Self {
             transport,
             is_streaming_mode,
@@ -111,6 +125,8 @@ impl Query {
             initialized: false,
             initialization_result: None,
             initialize_timeout,
+            pending_stdin_close: false,
+            stream_close_timeout,
         }
     }
 
@@ -374,6 +390,9 @@ impl Query {
     ///
     /// While waiting, incoming control requests from the CLI are handled
     /// automatically, and content messages are queued for later retrieval.
+    ///
+    /// Each individual read from the transport is wrapped in a timeout, so the
+    /// method cannot hang indefinitely even if the CLI stops producing output.
     async fn send_control_request(&mut self, request: Value, timeout: Duration) -> Result<Value> {
         if !self.is_streaming_mode {
             return Err(Error::Other(
@@ -395,7 +414,8 @@ impl Query {
 
         let deadline = Instant::now() + timeout;
         loop {
-            if Instant::now() > deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
                 let subtype = request
                     .get("subtype")
                     .and_then(Value::as_str)
@@ -403,10 +423,23 @@ impl Query {
                 return Err(Error::Other(format!("Control request timeout: {subtype}")));
             }
 
-            let Some(message) = self.transport.read_next_message().await? else {
-                return Err(Error::Other(
-                    "Transport closed while waiting for control response".to_string(),
-                ));
+            let read_result =
+                tokio::time::timeout(remaining, self.transport.read_next_message()).await;
+            let message = match read_result {
+                Ok(Ok(Some(msg))) => msg,
+                Ok(Ok(None)) => {
+                    return Err(Error::Other(
+                        "Transport closed while waiting for control response".to_string(),
+                    ));
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(_) => {
+                    let subtype = request
+                        .get("subtype")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    return Err(Error::Other(format!("Control request timeout: {subtype}")));
+                }
             };
 
             let msg_type = message
@@ -551,11 +584,29 @@ impl Query {
     /// Streams multiple messages to the CLI and closes the input stream.
     ///
     /// Used for batch-style interactions where all input is provided upfront.
+    ///
+    /// If SDK MCP servers or hooks are present, stdin close is deferred until
+    /// the first result message is received (or a timeout expires). This allows
+    /// the CLI to send control requests (hook callbacks, MCP messages) that
+    /// require responses to be written back over stdin.
     pub async fn stream_input(&mut self, messages: Vec<Value>) -> Result<()> {
         for message in messages {
             self.send_raw_message(message).await?;
         }
-        self.transport.end_input().await
+
+        let has_hooks = !self.hooks.is_empty();
+        let has_sdk_mcp = !self.sdk_mcp_servers.is_empty();
+
+        if has_sdk_mcp || has_hooks {
+            debug!(
+                sdk_mcp_servers = self.sdk_mcp_servers.len(),
+                has_hooks, "Deferring stdin close until first result"
+            );
+            self.pending_stdin_close = true;
+        } else {
+            self.transport.end_input().await?;
+        }
+        Ok(())
     }
 
     /// Closes the input stream without sending any messages.
@@ -569,16 +620,45 @@ impl Query {
     /// are handled automatically and transparently. Only content messages
     /// (user, assistant, system, result, stream_event) are returned.
     ///
+    /// If stdin close was deferred (due to hooks/SDK MCP), the input stream
+    /// is closed when the first result message is received or on timeout.
+    ///
     /// Returns `None` when the stream is exhausted (no more messages).
     pub async fn receive_next_message(&mut self) -> Result<Option<Message>> {
+        let deadline = if self.pending_stdin_close {
+            Some(Instant::now() + self.stream_close_timeout)
+        } else {
+            None
+        };
+
         loop {
             let raw = if let Some(message) = self.queued_messages.pop_front() {
                 Some(message)
+            } else if let Some(deadline) = deadline {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    // Timeout waiting for result — close stdin now
+                    debug!("Timed out waiting for first result, closing input stream");
+                    self.try_close_deferred_stdin().await;
+                    self.transport.read_next_message().await?
+                } else {
+                    match tokio::time::timeout(remaining, self.transport.read_next_message()).await
+                    {
+                        Ok(result) => result?,
+                        Err(_) => {
+                            debug!("Timed out waiting for first result, closing input stream");
+                            self.try_close_deferred_stdin().await;
+                            continue;
+                        }
+                    }
+                }
             } else {
                 self.transport.read_next_message().await?
             };
 
             let Some(raw) = raw else {
+                // Stream ended — ensure stdin is closed
+                self.try_close_deferred_stdin().await;
                 return Ok(None);
             };
 
@@ -592,8 +672,23 @@ impl Query {
             }
 
             let parsed = parse_message(&raw)?;
-            if parsed.is_some() {
+            if let Some(ref msg) = parsed {
+                // Close stdin when the first result message arrives
+                if matches!(msg, Message::Result(_)) && self.pending_stdin_close {
+                    debug!("Received first result, closing input stream");
+                    self.try_close_deferred_stdin().await;
+                }
                 return Ok(parsed);
+            }
+        }
+    }
+
+    /// Closes stdin if a deferred close is pending; resets the flag.
+    async fn try_close_deferred_stdin(&mut self) {
+        if self.pending_stdin_close {
+            self.pending_stdin_close = false;
+            if let Err(e) = self.transport.end_input().await {
+                debug!("Error closing deferred stdin: {e}");
             }
         }
     }
@@ -644,5 +739,15 @@ impl Query {
     /// Closes the transport and ends the query session.
     pub async fn close(&mut self) -> Result<()> {
         self.transport.close().await
+    }
+
+    /// Closes the query session and returns the underlying transport.
+    ///
+    /// This allows the transport to be reused for subsequent connections
+    /// (e.g., when reconnecting a [`ClaudeSdkClient`](crate::ClaudeSdkClient)
+    /// with a custom transport).
+    pub async fn close_and_take_transport(mut self) -> Result<Box<dyn Transport>> {
+        self.transport.close().await?;
+        Ok(self.transport)
     }
 }

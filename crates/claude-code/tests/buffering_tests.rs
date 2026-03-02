@@ -1,4 +1,4 @@
-use claude_code_client_sdk::{DEFAULT_MAX_BUFFER_SIZE, JsonStreamBuffer};
+use claude_code::{DEFAULT_MAX_BUFFER_SIZE, JsonStreamBuffer};
 use serde_json::json;
 
 #[test]

@@ -63,6 +63,7 @@ pub enum InputPrompt {
 pub struct ClaudeSdkClient {
     options: ClaudeAgentOptions,
     custom_transport: Option<Box<dyn Transport>>,
+    has_custom_transport: bool,
     query: Option<Query>,
 }
 
@@ -76,9 +77,11 @@ impl ClaudeSdkClient {
     /// * `transport` — Optional custom [`Transport`] implementation. If `None`,
     ///   the default [`SubprocessCliTransport`] is used.
     pub fn new(options: Option<ClaudeAgentOptions>, transport: Option<Box<dyn Transport>>) -> Self {
+        let has_custom_transport = transport.is_some();
         Self {
             options: options.unwrap_or_default(),
             custom_transport: transport,
+            has_custom_transport,
             query: None,
         }
     }
@@ -376,11 +379,16 @@ impl ClaudeSdkClient {
     /// Disconnects from the Claude Code CLI and closes the session.
     ///
     /// After disconnecting, the client can be reconnected with [`connect()`](Self::connect).
+    /// If a custom transport was provided, it is recovered and can be reused on
+    /// the next [`connect()`](Self::connect) call.
     pub async fn disconnect(&mut self) -> Result<()> {
-        if let Some(query) = &mut self.query {
-            query.close().await?;
+        if let Some(query) = self.query.take() {
+            let transport = query.close_and_take_transport().await?;
+            // Recover the custom transport so it can be reused on reconnect.
+            if self.has_custom_transport {
+                self.custom_transport = Some(transport);
+            }
         }
-        self.query = None;
         Ok(())
     }
 }

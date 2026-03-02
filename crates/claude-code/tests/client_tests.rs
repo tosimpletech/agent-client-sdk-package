@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use claude_code_client_sdk::{ClaudeSdkClient, InputPrompt, Message, Result, Transport};
+use claude_code::{ClaudeSdkClient, InputPrompt, Message, Result, Transport};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 

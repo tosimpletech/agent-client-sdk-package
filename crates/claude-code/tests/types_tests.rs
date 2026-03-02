@@ -1,4 +1,4 @@
-use claude_code_client_sdk::{
+use claude_code::{
     AssistantMessage, ClaudeAgentOptions, PermissionMode, ResultMessage, TextBlock, ThinkingBlock,
     ToolResultBlock, ToolUseBlock, UserContent, UserMessage,
 };
@@ -21,7 +21,7 @@ fn test_assistant_message_with_text() {
         text: "Hello, human!".to_string(),
     };
     let msg = AssistantMessage {
-        content: vec![claude_code_client_sdk::ContentBlock::Text(text_block)],
+        content: vec![claude_code::ContentBlock::Text(text_block)],
         model: "claude-opus-4-1-20250805".to_string(),
         parent_tool_use_id: None,
         error: None,
@@ -36,7 +36,7 @@ fn test_assistant_message_with_thinking() {
         signature: "sig-123".to_string(),
     };
     let msg = AssistantMessage {
-        content: vec![claude_code_client_sdk::ContentBlock::Thinking(
+        content: vec![claude_code::ContentBlock::Thinking(
             thinking_block.clone(),
         )],
         model: "claude-opus-4-1-20250805".to_string(),
@@ -45,7 +45,7 @@ fn test_assistant_message_with_thinking() {
     };
     assert_eq!(msg.content.len(), 1);
     match &msg.content[0] {
-        claude_code_client_sdk::ContentBlock::Thinking(block) => {
+        claude_code::ContentBlock::Thinking(block) => {
             assert_eq!(block.thinking, thinking_block.thinking);
             assert_eq!(block.signature, thinking_block.signature);
         }
