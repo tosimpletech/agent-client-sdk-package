@@ -158,7 +158,7 @@ pub fn split_with_adapter(transport: Box<dyn Transport>) -> TransportSplitResult
 ///
 /// Wraps a `Box<dyn Transport>` in `Arc<Mutex<>>` and provides reader/writer
 /// halves that serialize access. This is the fallback for transports that
-/// don't override [`Transport::into_split()`].
+/// choose not to provide a native split.
 pub struct SplitAdapter {
     inner: Arc<Mutex<Box<dyn Transport>>>,
 }

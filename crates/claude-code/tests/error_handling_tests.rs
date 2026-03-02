@@ -8,6 +8,7 @@ use claude_code::{
 };
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
+use tokio::time::{Duration, sleep, timeout};
 
 #[derive(Default)]
 struct MockTransportState {
@@ -147,6 +148,68 @@ async fn test_transport_read_error_propagated_to_consumer() {
     .expect_err("must fail");
 
     assert!(err.to_string().contains("transport broken"));
+}
+
+#[tokio::test]
+async fn test_control_request_fails_fast_when_reader_terminated() {
+    struct FailAfterInitTransport {
+        read_calls: usize,
+    }
+
+    #[async_trait]
+    impl Transport for FailAfterInitTransport {
+        async fn connect(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        async fn write(&mut self, _data: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn end_input(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        async fn read_next_message(&mut self) -> Result<Option<Value>> {
+            self.read_calls += 1;
+            if self.read_calls == 1 {
+                Ok(Some(json!({
+                    "type": "control_response",
+                    "response": {"subtype": "success", "request_id": "req_1", "response": {}}
+                })))
+            } else {
+                Err(Error::Other("reader crashed".to_string()))
+            }
+        }
+
+        async fn close(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        fn is_ready(&self) -> bool {
+            true
+        }
+
+        fn into_split(self: Box<Self>) -> TransportSplitResult {
+            split_with_adapter(self)
+        }
+    }
+
+    let transport = FailAfterInitTransport { read_calls: 0 };
+    let mut client = ClaudeSdkClient::new_with_transport(None, Box::new(transport));
+    client.connect(None).await.expect("connect");
+
+    // Let the background reader consume one more read and fail.
+    sleep(Duration::from_millis(20)).await;
+
+    let outcome = timeout(Duration::from_millis(250), client.interrupt()).await;
+    let err = outcome
+        .expect("interrupt should fail fast, not timeout")
+        .expect_err("must fail");
+    assert!(
+        err.to_string().contains("Background reader task terminated")
+            || err.to_string().contains("reader crashed")
+    );
 }
 
 #[tokio::test]

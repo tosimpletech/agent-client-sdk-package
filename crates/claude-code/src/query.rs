@@ -83,6 +83,10 @@ struct QuerySharedState {
     pending_stdin_close: AtomicBool,
     /// Timeout for deferred stdin close.
     stream_close_timeout: Duration,
+    /// Whether the background reader task has terminated.
+    reader_terminated: AtomicBool,
+    /// Reason for reader task termination, if known.
+    reader_termination_reason: Mutex<Option<String>>,
 }
 
 /// Low-level query session handler for Claude Code CLI communication.
@@ -182,6 +186,8 @@ impl Query {
             writer: writer.clone(),
             pending_stdin_close: AtomicBool::new(false),
             stream_close_timeout,
+            reader_terminated: AtomicBool::new(false),
+            reader_termination_reason: Mutex::new(None),
         });
 
         let (message_tx, message_rx) = mpsc::channel(MESSAGE_CHANNEL_BUFFER);
@@ -296,6 +302,13 @@ impl Query {
                 return result;
             }
             controls.senders.insert(request_id.clone(), tx);
+        }
+        if state.reader_terminated.load(Ordering::SeqCst) {
+            state.pending_controls.lock().await.senders.remove(&request_id);
+            let reason = reader_termination_reason(state).await;
+            return Err(Error::Other(format!(
+                "Background reader task terminated: {reason}"
+            )));
         }
 
         // Wait for the response with timeout.
@@ -509,12 +522,17 @@ impl Drop for Query {
 
         if let Some(close_handle) = self.close_handle.take() {
             // Spawn a detached task to perform async cleanup.
-            // If the runtime is shutting down or unavailable, the
-            // SubprocessCloseHandle's own Drop impl provides a sync fallback.
+            // If no runtime is available, fall back to a temporary current-thread
+            // runtime for best-effort synchronous cleanup.
             if let Ok(handle) = tokio::runtime::Handle::try_current() {
                 handle.spawn(async move {
                     let _ = close_handle.close().await;
                 });
+            } else if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                let _ = runtime.block_on(async move { close_handle.close().await });
             }
         }
     }
@@ -554,6 +572,7 @@ async fn background_reader_task(
                 break;
             }
             Err(err) => {
+                mark_reader_terminated(&state, err.to_string()).await;
                 let _ = message_tx.send(Err(err)).await;
                 break;
             }
@@ -599,6 +618,37 @@ async fn background_reader_task(
             }
         }
     }
+}
+
+/// Marks reader termination and fails all pending control requests immediately.
+async fn mark_reader_terminated(state: &QuerySharedState, reason: String) {
+    state.reader_terminated.store(true, Ordering::SeqCst);
+    let stored_reason = {
+        let mut termination_reason = state.reader_termination_reason.lock().await;
+        if termination_reason.is_none() {
+            *termination_reason = Some(reason);
+        }
+        termination_reason
+            .clone()
+            .unwrap_or_else(|| "Unknown reason".to_string())
+    };
+
+    let mut controls = state.pending_controls.lock().await;
+    for (_, sender) in controls.senders.drain() {
+        let _ = sender.send(Err(Error::Other(format!(
+            "Background reader task terminated: {stored_reason}"
+        ))));
+    }
+}
+
+/// Returns the recorded reader termination reason or a generic fallback.
+async fn reader_termination_reason(state: &QuerySharedState) -> String {
+    state
+        .reader_termination_reason
+        .lock()
+        .await
+        .clone()
+        .unwrap_or_else(|| "Unknown reason".to_string())
 }
 
 /// Closes deferred stdin via the shared writer.
