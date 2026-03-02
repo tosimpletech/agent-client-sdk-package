@@ -20,40 +20,88 @@ def emit(obj):
     print(json.dumps(obj), flush=True)
 
 
+def emit_system_init():
+    emit(
+        {
+            "type": "system",
+            "subtype": "init",
+            "session_id": "mock-session",
+        }
+    )
+
+
 def emit_assistant(text: str):
+    emit_assistant_blocks([{"type": "text", "text": text}])
+
+
+def emit_assistant_blocks(content):
     emit(
         {
             "type": "assistant",
             "message": {
-                "content": [{"type": "text", "text": text}],
+                "content": content,
                 "model": "claude-sonnet-4-5",
             },
         }
     )
 
 
+def emit_stream_event(index: int, event: dict):
+    emit(
+        {
+            "type": "stream_event",
+            "uuid": f"stream-{index}",
+            "session_id": "mock-session",
+            "event": event,
+            "parent_tool_use_id": None,
+        }
+    )
+
+
 def emit_partial_events():
-    emit(
+    events = [
         {
-            "type": "stream_event",
-            "uuid": "stream-1",
-            "session_id": "mock-session",
-            "event": {"type": "message_start"},
-            "parent_tool_use_id": None,
-        }
-    )
-    emit(
-        {
-            "type": "stream_event",
-            "uuid": "stream-2",
-            "session_id": "mock-session",
-            "event": {
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "hi"},
+            "type": "message_start",
+            "message": {
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": "claude-sonnet-4-5",
             },
-            "parent_tool_use_id": None,
-        }
-    )
+        },
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking", "thinking": "", "signature": "sig-stream"},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "thinking_delta", "thinking": "2 + 2 means adding two and two. "},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "thinking_delta", "thinking": "That sum is 4 based on basic arithmetic."},
+        },
+        {"type": "content_block_stop", "index": 0},
+        {
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {"type": "text", "text": ""},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "text_delta", "text": "The answer is 4."},
+        },
+        {"type": "content_block_stop", "index": 1},
+        {"type": "message_stop"},
+    ]
+
+    for i, event in enumerate(events, start=1):
+        emit_stream_event(i, event)
 
 
 def parse_flags(argv):
@@ -280,9 +328,21 @@ def main():
                 continue
             if debug_to_stderr:
                 print("[DEBUG] got user message", file=sys.stderr, flush=True)
+            emit_system_init()
             if include_partial:
                 emit_partial_events()
-            emit_assistant("Mock answer")
+                emit_assistant_blocks(
+                    [
+                        {
+                            "type": "thinking",
+                            "thinking": "2 + 2 equals 4 after straightforward addition.",
+                            "signature": "sig-final",
+                        },
+                        {"type": "text", "text": "The answer is 4."},
+                    ]
+                )
+            else:
+                emit_assistant("Mock answer")
             emit(RESULT_MESSAGE)
             continue
 
