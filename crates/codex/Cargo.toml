@@ -3,17 +3,22 @@ name = "codex-client-sdk"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
+description = "Rust SDK for embedding the Codex agent via CLI-over-JSONL transport"
+license = "Apache-2.0"
+repository = "https://github.com/tosimpletech/agent-client-sdk-package"
+keywords = ["codex", "agent", "sdk", "openai"]
+categories = ["api-bindings", "asynchronous"]
 
 [lib]
 name = "codex"
 
 [dependencies]
 async-stream = "0.3"
-futures = "0.3"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 tempfile = "3"
-thiserror = "2"
-tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
 tokio-util = "0.7"
-which = "8"
+which = { workspace = true }
