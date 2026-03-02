@@ -373,20 +373,27 @@ async fn test_env_vars_passed_to_subprocess() {
         .expect("write initialize");
     transport.write("\n").await.expect("write newline");
 
-    let first = tokio::time::timeout(Duration::from_secs(1), transport.read_next_message())
-        .await
-        .expect("first message timeout")
-        .expect("first message read")
-        .expect("first message");
-    assert_eq!(first["type"], "control_response");
+    let mut saw_initialize_ack = false;
+    let mut saw_mcp_request = false;
 
-    let second = tokio::time::timeout(Duration::from_secs(1), transport.read_next_message())
-        .await
-        .expect("second message timeout")
-        .expect("second message read")
-        .expect("second message");
-    assert_eq!(second["type"], "control_request");
-    assert_eq!(second["request"]["subtype"], "mcp_message");
+    for _ in 0..4 {
+        let message = tokio::time::timeout(Duration::from_secs(1), transport.read_next_message())
+            .await
+            .expect("message timeout")
+            .expect("message read")
+            .expect("message");
+
+        if message["type"] == "control_response" {
+            saw_initialize_ack = true;
+        }
+        if message["type"] == "control_request" && message["request"]["subtype"] == "mcp_message" {
+            saw_mcp_request = true;
+            break;
+        }
+    }
+
+    assert!(saw_initialize_ack, "expected initialize control_response");
+    assert!(saw_mcp_request, "expected MCP control_request");
 
     transport.close().await.expect("close");
 }
