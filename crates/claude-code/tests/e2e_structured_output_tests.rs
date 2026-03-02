@@ -94,10 +94,7 @@ async fn test_e2e_nested_structured_output() {
     let output = extract_result_structured_output(&messages);
     assert_eq!(output["analysis"]["word_count"], 2);
     assert_eq!(output["analysis"]["character_count"], 11);
-    assert_eq!(
-        output["words"].as_array().map_or(0, std::vec::Vec::len),
-        2
-    );
+    assert_eq!(output["words"].as_array().map_or(0, std::vec::Vec::len), 2);
 }
 
 #[tokio::test]
@@ -134,7 +131,10 @@ async fn test_e2e_structured_output_with_enum() {
         .get("test_framework")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    assert!(matches!(framework, "pytest" | "unittest" | "nose" | "unknown"));
+    assert!(matches!(
+        framework,
+        "pytest" | "unittest" | "nose" | "unknown"
+    ));
     assert_eq!(framework, "pytest");
     assert_eq!(output["has_tests"], true);
 }
