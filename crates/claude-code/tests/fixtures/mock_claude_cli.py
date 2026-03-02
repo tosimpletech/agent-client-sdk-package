@@ -47,7 +47,10 @@ def emit_partial_events():
             "type": "stream_event",
             "uuid": "stream-2",
             "session_id": "mock-session",
-            "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hi"}},
+            "event": {
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "hi"},
+            },
             "parent_tool_use_id": None,
         }
     )
@@ -70,21 +73,108 @@ def parse_flags(argv):
     return flags, values
 
 
+def parse_csv(value: str):
+    if not value:
+        return []
+    return [item for item in value.split(",") if item]
+
+
+def is_tool_allowed(tool_name: str, allowed_tools, disallowed_tools):
+    if tool_name in disallowed_tools:
+        return False
+    if not allowed_tools:
+        return False
+    return tool_name in allowed_tools
+
+
+def make_mcp_request(request_id: str, server_name: str, method: str, params: dict):
+    return {
+        "request_id": request_id,
+        "request": {
+            "subtype": "mcp_message",
+            "server_name": server_name,
+            "message": {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": method,
+                "params": params,
+            },
+        },
+    }
+
+
+def build_mcp_sequence(scenario: str, allowed_tools, disallowed_tools):
+    sequence = []
+    completion_text = "MCP response handled"
+
+    if scenario == "list_only":
+        sequence.append(make_mcp_request("mcp_req_1", "mock-sdk", "tools/list", {}))
+        return sequence, completion_text
+
+    if scenario == "tool_execution":
+        server_name = "test"
+        planned_calls = [
+            ("mcp__test__echo", "echo", {"text": "hello from mock"}),
+        ]
+        completion_text = "SDK MCP tool_execution finished"
+    elif scenario == "permission_enforcement":
+        server_name = "test"
+        planned_calls = [
+            ("mcp__test__greet", "greet", {"name": "Alice"}),
+            ("mcp__test__echo", "echo", {"text": "test"}),
+        ]
+        completion_text = "SDK MCP permission_enforcement finished"
+    elif scenario == "multiple_tools":
+        server_name = "multi"
+        planned_calls = [
+            ("mcp__multi__echo", "echo", {"text": "test"}),
+            ("mcp__multi__greet", "greet", {"name": "Bob"}),
+        ]
+        completion_text = "SDK MCP multiple_tools finished"
+    elif scenario == "without_permissions":
+        server_name = "noperm"
+        planned_calls = [
+            ("mcp__noperm__echo", "echo", {"text": "blocked"}),
+        ]
+        completion_text = "SDK MCP without_permissions finished"
+    else:
+        return sequence, completion_text
+
+    sequence.append(make_mcp_request("mcp_req_1", server_name, "tools/list", {}))
+    request_index = 2
+    for full_tool_name, short_name, args in planned_calls:
+        if is_tool_allowed(full_tool_name, allowed_tools, disallowed_tools):
+            sequence.append(
+                make_mcp_request(
+                    f"mcp_req_{request_index}",
+                    server_name,
+                    "tools/call",
+                    {"name": short_name, "arguments": args},
+                )
+            )
+            request_index += 1
+    return sequence, completion_text
+
+
 def main():
     argv = sys.argv[1:]
     if "-v" in argv or "--version" in argv:
         print(os.environ.get("MOCK_CLAUDE_VERSION", "2.1.0"))
         return 0
 
-    flags, _ = parse_flags(argv)
+    flags, values = parse_flags(argv)
     include_partial = "include-partial-messages" in flags
     debug_to_stderr = "debug-to-stderr" in flags
+    allowed_tools = parse_csv(values.get("allowedTools", ""))
+    disallowed_tools = parse_csv(values.get("disallowedTools", ""))
 
     if debug_to_stderr:
         print("[DEBUG] mock cli boot", file=sys.stderr, flush=True)
 
-    mcp_request_id = "mcp_req_1"
     waiting_for_mcp_response = False
+    current_mcp_request_id = None
+    pending_mcp_sequence = []
+    mcp_completion_text = "MCP response handled"
 
     for raw in sys.stdin:
         line = raw.strip()
@@ -114,24 +204,23 @@ def main():
                         },
                     }
                 )
+
                 if os.environ.get("MOCK_CLAUDE_TRIGGER_MCP") == "1":
-                    waiting_for_mcp_response = True
-                    emit(
-                        {
-                            "type": "control_request",
-                            "request_id": mcp_request_id,
-                            "request": {
-                                "subtype": "mcp_message",
-                                "server_name": "mock-sdk",
-                                "message": {
-                                    "jsonrpc": "2.0",
-                                    "id": 42,
-                                    "method": "tools/list",
-                                    "params": {},
-                                },
-                            },
-                        }
+                    scenario = os.environ.get("MOCK_CLAUDE_MCP_SCENARIO", "list_only")
+                    pending_mcp_sequence, mcp_completion_text = build_mcp_sequence(
+                        scenario, allowed_tools, disallowed_tools
                     )
+                    if pending_mcp_sequence:
+                        waiting_for_mcp_response = True
+                        next_req = pending_mcp_sequence.pop(0)
+                        current_mcp_request_id = next_req["request_id"]
+                        emit(
+                            {
+                                "type": "control_request",
+                                "request_id": next_req["request_id"],
+                                "request": next_req["request"],
+                            }
+                        )
                 continue
 
             if subtype in {
@@ -167,10 +256,22 @@ def main():
 
         if msg_type == "control_response" and waiting_for_mcp_response:
             req_id = msg.get("response", {}).get("request_id")
-            if req_id == mcp_request_id:
-                waiting_for_mcp_response = False
-                emit_assistant("MCP response handled")
-                emit(RESULT_MESSAGE)
+            if req_id == current_mcp_request_id:
+                if pending_mcp_sequence:
+                    next_req = pending_mcp_sequence.pop(0)
+                    current_mcp_request_id = next_req["request_id"]
+                    emit(
+                        {
+                            "type": "control_request",
+                            "request_id": next_req["request_id"],
+                            "request": next_req["request"],
+                        }
+                    )
+                else:
+                    waiting_for_mcp_response = False
+                    current_mcp_request_id = None
+                    emit_assistant(mcp_completion_text)
+                    emit(RESULT_MESSAGE)
             continue
 
         if msg_type == "user":

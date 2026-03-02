@@ -186,13 +186,14 @@ impl McpSdkServer {
     /// Calls a tool by name with the given arguments and returns the JSON result.
     ///
     /// If the tool is not found or the handler returns an error, an error result
-    /// in MCP format is returned (with `is_error: true`).
+    /// in MCP format is returned (with `isError: true`).
     pub async fn call_tool_json(&self, tool_name: &str, arguments: Value) -> Value {
         let Some(tool) = self.tool_map.get(tool_name) else {
             return json!({
                 "content": [
                     {"type": "text", "text": format!("Tool '{tool_name}' not found")}
                 ],
+                "isError": true,
                 "is_error": true
             });
         };
@@ -201,6 +202,7 @@ impl McpSdkServer {
             Ok(result) => result,
             Err(err) => json!({
                 "content": [{"type": "text", "text": err.to_string()}],
+                "isError": true,
                 "is_error": true
             }),
         }
