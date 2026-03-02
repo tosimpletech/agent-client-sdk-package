@@ -89,6 +89,9 @@ where
 /// Sends a one-off query and returns responses as a stream.
 ///
 /// The returned stream yields parsed [`Message`] values as they arrive.
+///
+/// Note: the return type is [`LocalBoxStream`], so the stream is not `Send`.
+/// Consume it on the same task where it is created.
 pub async fn query_stream(
     prompt: InputPrompt,
     options: Option<ClaudeAgentOptions>,
@@ -102,6 +105,9 @@ pub async fn query_stream(
 }
 
 /// Sends a one-off query with streamed input and streamed output.
+///
+/// Note: the return type is [`LocalBoxStream`], so the stream is not `Send`.
+/// Consume it on the same task where it is created.
 pub async fn query_stream_from_stream<S>(
     prompt: S,
     options: Option<ClaudeAgentOptions>,

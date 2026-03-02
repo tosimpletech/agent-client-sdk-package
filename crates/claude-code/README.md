@@ -54,6 +54,13 @@ Current status: all tests pass with `cargo test`.
 - `thiserror` is used for structured error types and transparent wrapper behavior where appropriate.
 - Codebase is kept clippy-clean under strict mode: `cargo clippy --all-targets --all-features -- -D warnings`.
 
+## Known Limitations and Concurrency Model
+
+- `Query::start()` is currently a no-op, and the SDK uses a pull-based read model (`receive_next_message`) instead of a dedicated background reader task.
+- Control protocol messages (`control_request`) are handled inline while receiving messages, which keeps behavior correct for the current API surface but is less resilient than Python's task-group model under extreme bidirectional streaming patterns.
+- One-shot streaming APIs (`query_stream`, `query_stream_from_stream`) return `LocalBoxStream`, which is not `Send`. Consume these streams on the same task/thread where they are created.
+- For cross-task fan-out, prefer adapting the returned stream into an application channel (`tokio::sync::mpsc`) or collecting into owned values before handoff.
+
 ## Functional Differences vs Python SDK
 
 | Area | Python SDK | Rust SDK (this crate) | Notes |
