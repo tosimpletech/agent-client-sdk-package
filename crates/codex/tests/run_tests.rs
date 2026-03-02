@@ -189,6 +189,26 @@ async fn passes_web_search_mode_to_exec() {
 }
 
 #[tokio::test]
+async fn prefers_web_search_mode_over_web_search_enabled_when_both_are_set() {
+    let harness = MockCodexHarness::new(vec![success_events(Some("thread_1"), "ok", "item_1")]);
+    let codex = harness.codex(CodexOptions::default()).expect("codex");
+
+    let thread = codex.start_thread(Some(ThreadOptions {
+        web_search_mode: Some(WebSearchMode::Cached),
+        web_search_enabled: Some(true),
+        ..Default::default()
+    }));
+    thread
+        .run("web search precedence", None)
+        .await
+        .expect("run");
+
+    let args = &harness.logs()[0].args;
+    let values = collect_config_values(args, "web_search");
+    assert_eq!(values, vec!["web_search=\"cached\"".to_string()]);
+}
+
+#[tokio::test]
 async fn passes_web_search_disabled_to_exec() {
     let harness = MockCodexHarness::new(vec![success_events(Some("thread_1"), "ok", "item_1")]);
     let codex = harness.codex(CodexOptions::default()).expect("codex");
@@ -251,6 +271,53 @@ async fn passes_codex_config_overrides_as_toml_flags() {
             "--config",
             "tool_rules.allow=[\"git status\", \"git diff\"]",
         ),
+    );
+}
+
+#[tokio::test]
+async fn errors_on_null_config_override_values() {
+    let harness = MockCodexHarness::new(vec![success_events(Some("thread_1"), "ok", "item_1")]);
+    let mut options = CodexOptions::default();
+    options.config = Some(
+        json!({
+            "approval_policy": null
+        })
+        .as_object()
+        .expect("config object")
+        .clone(),
+    );
+    let codex = harness.codex(options).expect("codex");
+    let thread = codex.start_thread(None);
+
+    let error = thread
+        .run("invalid config", None)
+        .await
+        .expect_err("must fail");
+    assert!(error.to_string().contains("cannot be null"));
+}
+
+#[tokio::test]
+async fn serializes_non_bare_inline_table_keys_with_quotes() {
+    let harness = MockCodexHarness::new(vec![success_events(Some("thread_1"), "ok", "item_1")]);
+    let mut options = CodexOptions::default();
+    options.config = Some(
+        json!({
+            "tool_rules": {
+                "allow list": ["git status"]
+            }
+        })
+        .as_object()
+        .expect("config object")
+        .clone(),
+    );
+    let codex = harness.codex(options).expect("codex");
+    let thread = codex.start_thread(None);
+    thread.run("quoted key", None).await.expect("run");
+
+    let args = &harness.logs()[0].args;
+    expect_pair(
+        args,
+        ("--config", "tool_rules.\"allow list\"=[\"git status\"]"),
     );
 }
 
@@ -358,6 +425,29 @@ async fn writes_output_schema_temp_file_and_cleans_up() {
     assert_eq!(logs[0].output_schema, Some(schema));
     let schema_path = logs[0].output_schema_path.clone().expect("schema path");
     assert!(!harness.path_exists(&schema_path));
+}
+
+#[tokio::test]
+async fn rejects_non_object_output_schema() {
+    let harness = MockCodexHarness::new(vec![success_events(Some("thread_1"), "ok", "item_1")]);
+    let codex = harness.codex(CodexOptions::default()).expect("codex");
+    let thread = codex.start_thread(None);
+
+    let error = thread
+        .run(
+            "structured",
+            Some(TurnOptions {
+                output_schema: Some(json!(["not", "an", "object"])),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect_err("must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("output_schema must be a plain JSON object")
+    );
 }
 
 #[tokio::test]
@@ -475,6 +565,27 @@ async fn throws_thread_run_error_on_turn_failures() {
 
     let error = thread.run("fail", None).await.expect_err("must fail");
     assert!(error.to_string().contains("rate limit exceeded"));
+}
+
+#[tokio::test]
+async fn throws_thread_run_error_on_stream_error_event() {
+    let harness = MockCodexHarness::new(vec![vec![
+        json!({ "type": "thread.started", "thread_id": "thread_1" }),
+        json!({ "type": "turn.started" }),
+        json!({
+            "type": "error",
+            "message": "stream disconnected before completion"
+        }),
+    ]]);
+    let codex = harness.codex(CodexOptions::default()).expect("codex");
+    let thread = codex.start_thread(None);
+
+    let error = thread.run("fail", None).await.expect_err("must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("stream disconnected before completion")
+    );
 }
 
 #[tokio::test]

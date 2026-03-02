@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use async_stream::try_stream;
@@ -233,14 +234,19 @@ impl CodexExec {
 }
 
 fn find_codex_path() -> Result<String> {
-    which::which("codex")
-        .map(|path| path.to_string_lossy().into_owned())
-        .map_err(|_| {
-            Error::CliNotFound(
-                "codex executable was not found in PATH. Set codex_path_override or install @openai/codex"
-                    .to_string(),
-            )
-        })
+    if let Ok(path) = which::which("codex") {
+        return Ok(path.to_string_lossy().into_owned());
+    }
+
+    let cwd = std::env::current_dir().ok();
+    let home = home_dir();
+    if let Some(path) = find_codex_path_from(cwd.as_deref(), home.as_deref()) {
+        return Ok(path);
+    }
+
+    Err(Error::CliNotFound(
+        "codex executable was not found. Checked PATH, local node_modules, platform vendor binaries, and common global install locations. Set codex_path_override or install @openai/codex".to_string(),
+    ))
 }
 
 fn build_env(
@@ -263,6 +269,113 @@ fn build_env(
     }
 
     env
+}
+
+fn find_codex_path_from(start_dir: Option<&Path>, home_dir: Option<&Path>) -> Option<String> {
+    if let Some(start_dir) = start_dir {
+        for dir in start_dir.ancestors() {
+            let local_bin = dir
+                .join("node_modules")
+                .join(".bin")
+                .join(codex_binary_name());
+            if local_bin.is_file() {
+                return Some(local_bin.to_string_lossy().into_owned());
+            }
+
+            if let Some(vendor_path) = local_vendor_binary_path(dir) {
+                return Some(vendor_path.to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    for path in common_global_locations(home_dir) {
+        if path.is_file() {
+            return Some(path.to_string_lossy().into_owned());
+        }
+    }
+
+    None
+}
+
+fn local_vendor_binary_path(base_dir: &Path) -> Option<PathBuf> {
+    let target_triple = platform_target_triple()?;
+    let package = platform_package_for_target(target_triple)?;
+
+    let candidate = base_dir
+        .join("node_modules")
+        .join(package)
+        .join("vendor")
+        .join(target_triple)
+        .join("codex")
+        .join(codex_binary_name());
+
+    if candidate.is_file() {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+fn common_global_locations(home_dir: Option<&Path>) -> Vec<PathBuf> {
+    let mut locations = Vec::new();
+    if let Some(home) = home_dir {
+        locations.push(
+            home.join(".npm-global")
+                .join("bin")
+                .join(codex_binary_name()),
+        );
+        locations.push(home.join(".local").join("bin").join(codex_binary_name()));
+        locations.push(
+            home.join("node_modules")
+                .join(".bin")
+                .join(codex_binary_name()),
+        );
+        locations.push(home.join(".yarn").join("bin").join(codex_binary_name()));
+        locations.push(home.join(".codex").join("local").join(codex_binary_name()));
+    }
+    locations.push(PathBuf::from("/usr/local/bin").join(codex_binary_name()));
+    locations
+}
+
+fn codex_binary_name() -> &'static str {
+    if cfg!(windows) { "codex.exe" } else { "codex" }
+}
+
+fn home_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("USERPROFILE").map(PathBuf::from)
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var_os("HOME").map(PathBuf::from)
+    }
+}
+
+fn platform_target_triple() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => Some("x86_64-unknown-linux-musl"),
+        ("linux", "aarch64") => Some("aarch64-unknown-linux-musl"),
+        ("android", "x86_64") => Some("x86_64-unknown-linux-musl"),
+        ("android", "aarch64") => Some("aarch64-unknown-linux-musl"),
+        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("windows", "x86_64") => Some("x86_64-pc-windows-msvc"),
+        ("windows", "aarch64") => Some("aarch64-pc-windows-msvc"),
+        _ => None,
+    }
+}
+
+fn platform_package_for_target(target_triple: &str) -> Option<&'static str> {
+    match target_triple {
+        "x86_64-unknown-linux-musl" => Some("@openai/codex-linux-x64"),
+        "aarch64-unknown-linux-musl" => Some("@openai/codex-linux-arm64"),
+        "x86_64-apple-darwin" => Some("@openai/codex-darwin-x64"),
+        "aarch64-apple-darwin" => Some("@openai/codex-darwin-arm64"),
+        "x86_64-pc-windows-msvc" => Some("@openai/codex-win32-x64"),
+        "aarch64-pc-windows-msvc" => Some("@openai/codex-win32-arm64"),
+        _ => None,
+    }
 }
 
 fn spawn_stderr_reader(stderr: Option<tokio::process::ChildStderr>) -> JoinHandle<String> {
@@ -341,10 +454,11 @@ fn flatten_config_overrides(
             ));
         }
 
+        let formatted_key = format_toml_key(key);
         let path = if prefix.is_empty() {
-            key.to_string()
+            formatted_key
         } else {
-            format!("{prefix}.{key}")
+            format!("{prefix}.{formatted_key}")
         };
 
         if child.is_object() {
@@ -445,5 +559,71 @@ fn approval_mode_to_str(mode: ApprovalMode) -> &'static str {
         ApprovalMode::OnRequest => "on-request",
         ApprovalMode::OnFailure => "on-failure",
         ApprovalMode::Untrusted => "untrusted",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        codex_binary_name, find_codex_path_from, platform_package_for_target,
+        platform_target_triple,
+    };
+
+    #[test]
+    fn finds_codex_in_local_node_modules_bin() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let bin = root.path().join("node_modules").join(".bin");
+        std::fs::create_dir_all(&bin).expect("create bin");
+        let codex = bin.join(codex_binary_name());
+        std::fs::write(&codex, "").expect("create file");
+
+        let nested = root.path().join("packages").join("app");
+        std::fs::create_dir_all(&nested).expect("create nested");
+
+        let found = find_codex_path_from(Some(&nested), None).expect("path");
+        assert_eq!(found, codex.to_string_lossy());
+    }
+
+    #[test]
+    fn finds_codex_in_platform_vendor_package() {
+        let Some(target) = platform_target_triple() else {
+            return;
+        };
+        let Some(package) = platform_package_for_target(target) else {
+            return;
+        };
+
+        let root = tempfile::tempdir().expect("tempdir");
+        let codex = root
+            .path()
+            .join("node_modules")
+            .join(package)
+            .join("vendor")
+            .join(target)
+            .join("codex")
+            .join(codex_binary_name());
+        std::fs::create_dir_all(codex.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&codex, "").expect("write");
+
+        let nested = root.path().join("workspace").join("crate");
+        std::fs::create_dir_all(&nested).expect("nested");
+
+        let found = find_codex_path_from(Some(&nested), None).expect("path");
+        assert_eq!(found, codex.to_string_lossy());
+    }
+
+    #[test]
+    fn finds_codex_in_common_global_location() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let codex = home
+            .path()
+            .join(".npm-global")
+            .join("bin")
+            .join(codex_binary_name());
+        std::fs::create_dir_all(codex.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&codex, "").expect("write");
+
+        let found = find_codex_path_from(None, Some(home.path())).expect("path");
+        assert_eq!(found, codex.to_string_lossy());
     }
 }
