@@ -1,3 +1,76 @@
+//! # Claude Code SDK for Rust
+//!
+//! A Rust implementation of the Claude Code Agent SDK, providing programmatic access
+//! to Claude Code as a subprocess. This crate is a port of the official
+//! [Python Claude Code SDK](https://platform.claude.com/docs/en/agent-sdk/python).
+//!
+//! ## Overview
+//!
+//! The SDK provides two main ways to interact with Claude Code:
+//!
+//! - **[`query()`]** — Creates a new session for each interaction. Best for one-off tasks,
+//!   independent operations, and simple automation scripts.
+//! - **[`ClaudeSdkClient`]** — Maintains a conversation session across multiple exchanges.
+//!   Best for continuing conversations, follow-up questions, interactive applications, and
+//!   session lifecycle management.
+//!
+//! ## Quick Comparison
+//!
+//! | Feature | `query()` | `ClaudeSdkClient` |
+//! |---------|-----------|-------------------|
+//! | Session | New session each time | Reuses same session |
+//! | Conversation | Single exchange | Multiple exchanges in same context |
+//! | Connection | Managed automatically | Manual control |
+//! | Interrupts | Not supported | Supported |
+//! | Custom Tools | Supported | Supported |
+//! | Use Case | One-off tasks | Continuous conversations |
+//!
+//! ## Example — One-off query
+//!
+//! ```rust,no_run
+//! use claude_code::{query, ClaudeAgentOptions, InputPrompt, Message};
+//!
+//! # async fn example() -> claude_code::Result<()> {
+//! let messages = query(
+//!     InputPrompt::Text("What is 2 + 2?".to_string()),
+//!     Some(ClaudeAgentOptions {
+//!         permission_mode: Some(claude_code::PermissionMode::BypassPermissions),
+//!         ..Default::default()
+//!     }),
+//!     None,
+//! ).await?;
+//!
+//! for msg in messages {
+//!     if let Message::Assistant(assistant) = msg {
+//!         println!("{:?}", assistant.content);
+//!     }
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Example — Continuous conversation with `ClaudeSdkClient`
+//!
+//! ```rust,no_run
+//! use claude_code::{ClaudeSdkClient, InputPrompt};
+//!
+//! # async fn example() -> claude_code::Result<()> {
+//! let mut client = ClaudeSdkClient::new(None, None);
+//! client.connect(None).await?;
+//!
+//! // First question
+//! client.query(InputPrompt::Text("What's the capital of France?".into()), "default").await?;
+//! let response = client.receive_response().await?;
+//!
+//! // Follow-up — session retains context
+//! client.query(InputPrompt::Text("What's the population of that city?".into()), "default").await?;
+//! let follow_up = client.receive_response().await?;
+//!
+//! client.disconnect().await?;
+//! # Ok(())
+//! # }
+//! ```
+
 pub mod client;
 pub mod errors;
 pub mod internal_client;
@@ -33,4 +106,5 @@ pub use types::{
     UserMessage,
 };
 
+/// The version of the Claude Code Rust SDK, sourced from `Cargo.toml`.
 pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");

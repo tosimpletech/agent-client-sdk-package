@@ -1,3 +1,12 @@
+//! Internal client for executing single-query sessions.
+//!
+//! This module provides [`InternalClient`], a stateless helper that manages
+//! the full lifecycle of a single query: connect → initialize → send → receive → close.
+//!
+//! This is used internally by the [`query()`](crate::query) convenience function.
+//! Most users should use [`query()`](crate::query) or [`ClaudeSdkClient`](crate::ClaudeSdkClient)
+//! directly.
+
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -8,6 +17,11 @@ use crate::transport::Transport;
 use crate::transport::subprocess_cli::{Prompt as TransportPrompt, SubprocessCliTransport};
 use crate::types::{ClaudeAgentOptions, McpServerConfig, McpServersOption, Message};
 
+/// Stateless internal client for executing single-query sessions.
+///
+/// Unlike [`ClaudeSdkClient`](crate::ClaudeSdkClient), this client does not maintain
+/// state between queries. Each call to [`process_query()`](Self::process_query) creates
+/// a fresh connection, executes the query, and tears down the connection.
 pub struct InternalClient;
 
 impl Default for InternalClient {
@@ -17,10 +31,12 @@ impl Default for InternalClient {
 }
 
 impl InternalClient {
+    /// Creates a new `InternalClient`.
     pub fn new() -> Self {
         Self
     }
 
+    /// Extracts SDK MCP server instances from the options for in-process routing.
     fn extract_sdk_mcp_servers(
         options: &ClaudeAgentOptions,
     ) -> HashMap<String, std::sync::Arc<crate::sdk_mcp::McpSdkServer>> {
@@ -35,6 +51,24 @@ impl InternalClient {
         servers
     }
 
+    /// Executes a complete query lifecycle: connect, send, receive all messages, and close.
+    ///
+    /// # Arguments
+    ///
+    /// * `prompt` — The input prompt (text or structured messages).
+    /// * `options` — Configuration options for this query.
+    /// * `transport` — Optional custom transport. If `None`, uses the default subprocess transport.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<Message>` containing all messages from the interaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - `can_use_tool` is set with a `Text` prompt
+    /// - `can_use_tool` is set alongside `permission_prompt_tool_name`
+    /// - The CLI process fails to start or communicate
     pub async fn process_query(
         &self,
         prompt: InputPrompt,

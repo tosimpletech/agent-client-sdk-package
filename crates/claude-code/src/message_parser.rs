@@ -1,3 +1,11 @@
+//! JSON message parser for the Claude Code CLI protocol.
+//!
+//! This module converts raw JSON values from the CLI output stream into
+//! typed [`Message`] variants. It handles all message types: user, assistant,
+//! system, result, and stream_event.
+//!
+//! The primary entry point is [`parse_message()`].
+
 use serde_json::Value;
 
 use crate::errors::MessageParseError;
@@ -6,6 +14,7 @@ use crate::types::{
     ThinkingBlock, ToolResultBlock, ToolUseBlock, UserContent, UserMessage,
 };
 
+/// Returns a human-readable type name for a JSON value (for error messages).
 fn value_type_name(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
@@ -17,6 +26,7 @@ fn value_type_name(value: &Value) -> &'static str {
     }
 }
 
+/// Extracts a required field from a JSON object, returning a descriptive error if missing.
 fn get_required<'a>(
     data: &'a serde_json::Map<String, Value>,
     key: &str,
@@ -31,6 +41,10 @@ fn get_required<'a>(
     })
 }
 
+/// Parses an array of JSON content blocks into typed [`ContentBlock`] variants.
+///
+/// Supports `text`, `thinking`, `tool_use`, and `tool_result` block types.
+/// Unknown block types are silently skipped.
 fn parse_content_blocks(blocks: &[Value], include_thinking: bool) -> Vec<ContentBlock> {
     let mut content_blocks = Vec::new();
 
@@ -91,6 +105,27 @@ fn parse_content_blocks(blocks: &[Value], include_thinking: bool) -> Vec<Content
     content_blocks
 }
 
+/// Parses a raw JSON value from the CLI into a typed [`Message`].
+///
+/// # Arguments
+///
+/// * `data` — A JSON value representing a single message from the CLI output stream.
+///
+/// # Returns
+///
+/// - `Ok(Some(message))` — Successfully parsed into a known message type.
+/// - `Ok(None)` — The message type is unrecognized (silently skipped).
+/// - `Err(MessageParseError)` — The message is malformed or missing required fields.
+///
+/// # Supported message types
+///
+/// | `type` field | Parsed into |
+/// |-------------|-------------|
+/// | `"user"` | [`Message::User`] |
+/// | `"assistant"` | [`Message::Assistant`] |
+/// | `"system"` | [`Message::System`] |
+/// | `"result"` | [`Message::Result`] |
+/// | `"stream_event"` | [`Message::StreamEvent`] |
 pub fn parse_message(data: &Value) -> std::result::Result<Option<Message>, MessageParseError> {
     let Some(obj) = data.as_object() else {
         return Err(MessageParseError::new(
