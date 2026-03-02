@@ -207,7 +207,8 @@ async fn test_control_request_fails_fast_when_reader_terminated() {
         .expect("interrupt should fail fast, not timeout")
         .expect_err("must fail");
     assert!(
-        err.to_string().contains("Background reader task terminated")
+        err.to_string()
+            .contains("Background reader task terminated")
             || err.to_string().contains("reader crashed")
     );
 }

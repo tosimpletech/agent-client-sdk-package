@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use claude_code::{
-    ClaudeAgentOptions, ClaudeSdkClient, InputPrompt, Message, Result, Transport,
-    TransportFactory, TransportSplitResult, split_with_adapter,
+    ClaudeAgentOptions, ClaudeSdkClient, InputPrompt, Message, Result, Transport, TransportFactory,
+    TransportSplitResult, split_with_adapter,
 };
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
@@ -142,10 +142,7 @@ async fn test_multiple_control_requests_with_buffered_responses() {
     let mut client = ClaudeSdkClient::new_with_transport(None, Box::new(transport));
     client.connect(None).await.expect("connect");
     client.interrupt().await.expect("interrupt");
-    client
-        .set_model(Some("haiku"))
-        .await
-        .expect("set_model");
+    client.set_model(Some("haiku")).await.expect("set_model");
 
     let state = state.lock().await;
     assert!(

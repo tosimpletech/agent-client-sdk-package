@@ -16,8 +16,8 @@ use serde_json::Value;
 use crate::errors::{CLIConnectionError, Error, Result};
 use crate::query::{Query, build_hooks_config};
 use crate::sdk_mcp::McpSdkServer;
-use crate::transport::{Transport, TransportFactory};
 use crate::transport::subprocess_cli::{Prompt as TransportPrompt, SubprocessCliTransport};
+use crate::transport::{Transport, TransportFactory};
 use crate::types::{ClaudeAgentOptions, McpServerConfig, McpServersOption, Message};
 
 /// Input prompt for a query — either plain text or structured messages.
@@ -128,9 +128,9 @@ impl ClaudeSdkClient {
     ) -> Self {
         Self {
             options: options.unwrap_or_default(),
-            transport_factory: Some(Box::new(SingleUseTransportFactory(
-                std::sync::Mutex::new(Some(transport)),
-            ))),
+            transport_factory: Some(Box::new(SingleUseTransportFactory(std::sync::Mutex::new(
+                Some(transport),
+            )))),
             query: None,
         }
     }
@@ -143,9 +143,7 @@ impl ClaudeSdkClient {
         Duration::from_secs_f64((timeout_ms as f64 / 1000.0).max(60.0))
     }
 
-    fn extract_sdk_mcp_servers(
-        options: &ClaudeAgentOptions,
-    ) -> HashMap<String, Arc<McpSdkServer>> {
+    fn extract_sdk_mcp_servers(options: &ClaudeAgentOptions) -> HashMap<String, Arc<McpSdkServer>> {
         let mut servers = HashMap::new();
         if let McpServersOption::Servers(configs) = &options.mcp_servers {
             for (name, config) in configs {

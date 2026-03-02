@@ -51,7 +51,10 @@ fn test_agent_definition_deserialization() {
     let agent: AgentDefinition = serde_json::from_value(json).expect("deserialize");
     assert_eq!(agent.description, "A test agent");
     assert_eq!(agent.prompt, "Do testing");
-    assert_eq!(agent.tools.as_deref(), Some(&["Bash".to_string(), "Write".to_string()][..]));
+    assert_eq!(
+        agent.tools.as_deref(),
+        Some(&["Bash".to_string(), "Write".to_string()][..])
+    );
     assert_eq!(agent.model.as_deref(), Some("haiku"));
 }
 
@@ -78,14 +81,18 @@ fn test_agent_definitions_map_serialization() {
     );
 
     let serialized = serde_json::to_value(&agents).expect("serialize");
-    assert!(serialized["code_reviewer"]["description"]
-        .as_str()
-        .unwrap()
-        .contains("Reviews code"));
-    assert!(serialized["test_writer"]["model"]
-        .as_str()
-        .unwrap()
-        .contains("opus"));
+    assert!(
+        serialized["code_reviewer"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("Reviews code")
+    );
+    assert!(
+        serialized["test_writer"]["model"]
+            .as_str()
+            .unwrap()
+            .contains("opus")
+    );
 
     // Round-trip deserialization.
     let deserialized: HashMap<String, AgentDefinition> =

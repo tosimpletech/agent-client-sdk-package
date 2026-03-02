@@ -54,8 +54,7 @@ fn test_permission_mode_serialization_roundtrip() {
         let serialized = serde_json::to_value(&mode).expect("serialize");
         assert_eq!(serialized, json!(expected_str));
 
-        let deserialized: PermissionMode =
-            serde_json::from_value(serialized).expect("deserialize");
+        let deserialized: PermissionMode = serde_json::from_value(serialized).expect("deserialize");
         assert_eq!(deserialized, mode);
     }
 }

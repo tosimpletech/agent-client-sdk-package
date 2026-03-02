@@ -44,9 +44,7 @@ impl InternalClient {
     }
 
     /// Extracts SDK MCP server instances from the options for in-process routing.
-    fn extract_sdk_mcp_servers(
-        options: &ClaudeAgentOptions,
-    ) -> HashMap<String, Arc<McpSdkServer>> {
+    fn extract_sdk_mcp_servers(options: &ClaudeAgentOptions) -> HashMap<String, Arc<McpSdkServer>> {
         let mut servers = HashMap::new();
         if let McpServersOption::Servers(configs) = &options.mcp_servers {
             for (name, config) in configs {

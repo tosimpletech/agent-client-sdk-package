@@ -7,6 +7,7 @@
 //! from a byte stream.
 
 use std::collections::{HashMap, VecDeque};
+use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -17,6 +18,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
+use tracing::warn;
 
 use crate::errors::{
     CLIConnectionError, CLIJSONDecodeError, CLINotFoundError, Error, ProcessError, Result,
@@ -740,7 +742,11 @@ impl Transport for SubprocessCliTransport {
                             let trimmed = line.trim_end().to_string();
                             if !trimmed.is_empty() {
                                 if let Some(cb) = &callback {
-                                    cb(trimmed);
+                                    let callback_result =
+                                        panic::catch_unwind(AssertUnwindSafe(|| cb(trimmed)));
+                                    if callback_result.is_err() {
+                                        warn!("stderr callback panicked; continuing stderr drain");
+                                    }
                                 }
                             }
                         }
@@ -872,10 +878,9 @@ impl Transport for SubprocessCliTransport {
 
     fn into_split(mut self: Box<Self>) -> super::TransportSplitResult {
         if !self.ready {
-            return Err(CLIConnectionError::new(
-                "Cannot split a transport that is not connected",
-            )
-            .into());
+            return Err(
+                CLIConnectionError::new("Cannot split a transport that is not connected").into(),
+            );
         }
 
         let stdout = self.stdout.take().ok_or_else(|| {
@@ -986,9 +991,9 @@ impl TransportWriter for SubprocessWriter {
         let _guard = self.write_lock.lock().await;
 
         let mut stdin_guard = self.stdin.lock().await;
-        let stdin = stdin_guard.as_mut().ok_or_else(|| {
-            Error::CLIConnection(CLIConnectionError::new("stdin is closed"))
-        })?;
+        let stdin = stdin_guard
+            .as_mut()
+            .ok_or_else(|| Error::CLIConnection(CLIConnectionError::new("stdin is closed")))?;
 
         stdin.write_all(data.as_bytes()).await.map_err(|e| {
             Error::CLIConnection(CLIConnectionError::new(format!(

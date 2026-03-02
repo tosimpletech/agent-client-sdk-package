@@ -12,15 +12,17 @@
 //! [`query()`](crate::query) instead of interacting with this module directly.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
-use futures::{Stream, StreamExt};
+use futures::{FutureExt, Stream, StreamExt};
 use serde_json::{Map, Value, json};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::errors::{Error, Result};
 use crate::message_parser::parse_message;
@@ -58,6 +60,40 @@ fn convert_hook_output_for_cli(output: Value) -> Value {
         }
     }
     Value::Object(converted)
+}
+
+fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(msg) = payload.downcast_ref::<&str>() {
+        (*msg).to_string()
+    } else if let Some(msg) = payload.downcast_ref::<String>() {
+        msg.clone()
+    } else {
+        "unknown panic payload".to_string()
+    }
+}
+
+fn callback_panic_error(callback_type: &str, payload: Box<dyn std::any::Any + Send>) -> Error {
+    let panic_message = panic_payload_to_string(payload);
+    warn!(
+        callback_type,
+        panic_message, "Caught panic in callback invocation"
+    );
+    Error::Other(format!(
+        "{callback_type} callback panicked: {panic_message}"
+    ))
+}
+
+async fn await_callback_with_panic_isolation<T, F>(
+    callback_type: &str,
+    callback_future: F,
+) -> Result<T>
+where
+    F: Future<Output = Result<T>>,
+{
+    match AssertUnwindSafe(callback_future).catch_unwind().await {
+        Ok(result) => result,
+        Err(payload) => Err(callback_panic_error(callback_type, payload)),
+    }
 }
 
 /// Tracks pending control request senders and early-arrival response buffers.
@@ -270,9 +306,10 @@ impl Query {
             ));
         }
 
-        let state = self.state.as_ref().ok_or_else(|| {
-            Error::Other("Query not started or already closed.".to_string())
-        })?;
+        let state = self
+            .state
+            .as_ref()
+            .ok_or_else(|| Error::Other("Query not started or already closed.".to_string()))?;
 
         let request_id = format!(
             "req_{}",
@@ -304,7 +341,12 @@ impl Query {
             controls.senders.insert(request_id.clone(), tx);
         }
         if state.reader_terminated.load(Ordering::SeqCst) {
-            state.pending_controls.lock().await.senders.remove(&request_id);
+            state
+                .pending_controls
+                .lock()
+                .await
+                .senders
+                .remove(&request_id);
             let reason = reader_termination_reason(state).await;
             return Err(Error::Other(format!(
                 "Background reader task terminated: {reason}"
@@ -328,7 +370,12 @@ impl Query {
                     .get("subtype")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                state.pending_controls.lock().await.senders.remove(&request_id);
+                state
+                    .pending_controls
+                    .lock()
+                    .await
+                    .senders
+                    .remove(&request_id);
                 Err(Error::Other(format!("Control request timeout: {subtype}")))
             }
         }
@@ -352,9 +399,10 @@ impl Query {
 
     /// Writes a JSON message to the shared writer.
     async fn write_message(&self, message: &Value) -> Result<()> {
-        let state = self.state.as_ref().ok_or_else(|| {
-            Error::Other("Query not started or already closed.".to_string())
-        })?;
+        let state = self
+            .state
+            .as_ref()
+            .ok_or_else(|| Error::Other("Query not started or already closed.".to_string()))?;
         state
             .writer
             .lock()
@@ -401,9 +449,10 @@ impl Query {
     }
 
     async fn finalize_stream_input(&self) -> Result<()> {
-        let state = self.state.as_ref().ok_or_else(|| {
-            Error::Other("Query not started or already closed.".to_string())
-        })?;
+        let state = self
+            .state
+            .as_ref()
+            .ok_or_else(|| Error::Other("Query not started or already closed.".to_string()))?;
 
         if self.has_hooks_or_mcp {
             debug!(
@@ -419,9 +468,10 @@ impl Query {
 
     /// Closes the input stream without sending any messages.
     pub async fn end_input(&self) -> Result<()> {
-        let state = self.state.as_ref().ok_or_else(|| {
-            Error::Other("Query not started or already closed.".to_string())
-        })?;
+        let state = self
+            .state
+            .as_ref()
+            .ok_or_else(|| Error::Other("Query not started or already closed.".to_string()))?;
         state.writer.lock().await.end_input().await
     }
 
@@ -432,9 +482,10 @@ impl Query {
     ///
     /// Returns `None` when the stream is exhausted (no more messages).
     pub async fn receive_next_message(&mut self) -> Result<Option<Message>> {
-        let rx = self.message_rx.as_mut().ok_or_else(|| {
-            Error::Other("Query not started or already closed.".to_string())
-        })?;
+        let rx = self
+            .message_rx
+            .as_mut()
+            .ok_or_else(|| Error::Other("Query not started or already closed.".to_string()))?;
 
         match rx.recv().await {
             Some(Ok(message)) => Ok(Some(message)),
@@ -612,7 +663,11 @@ async fn background_reader_task(
             }
             Ok(None) => {}
             Err(err) => {
-                if message_tx.send(Err(Error::MessageParse(err))).await.is_err() {
+                if message_tx
+                    .send(Err(Error::MessageParse(err)))
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -706,6 +761,116 @@ async fn handle_control_response(state: &QuerySharedState, raw: &Value) {
     }
 }
 
+async fn handle_can_use_tool_request(
+    state: &QuerySharedState,
+    request_data: &Map<String, Value>,
+) -> Result<Value> {
+    let callback = state
+        .can_use_tool
+        .clone()
+        .ok_or_else(|| Error::Other("canUseTool callback is not provided".to_string()))?;
+    let tool_name = request_data
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let input = request_data
+        .get("input")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let suggestions = request_data
+        .get("permission_suggestions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|value| serde_json::from_value(value).ok())
+        .collect();
+    let context = ToolPermissionContext { suggestions };
+
+    let callback_future = panic::catch_unwind(AssertUnwindSafe(|| {
+        callback(tool_name, input.clone(), context)
+    }))
+    .map_err(|payload| callback_panic_error("can_use_tool", payload))?;
+    let callback_result =
+        await_callback_with_panic_isolation("can_use_tool", callback_future).await?;
+    let output = match callback_result {
+        PermissionResult::Allow(allow) => {
+            let mut obj = Map::new();
+            obj.insert("behavior".to_string(), Value::String("allow".to_string()));
+            obj.insert(
+                "updatedInput".to_string(),
+                allow.updated_input.unwrap_or(input),
+            );
+            if let Some(updated_permissions) = allow.updated_permissions {
+                let permissions_json: Vec<Value> = updated_permissions
+                    .into_iter()
+                    .map(|permission| permission.to_cli_dict())
+                    .collect();
+                obj.insert(
+                    "updatedPermissions".to_string(),
+                    Value::Array(permissions_json),
+                );
+            }
+            Value::Object(obj)
+        }
+        PermissionResult::Deny(deny) => {
+            let mut obj = Map::new();
+            obj.insert("behavior".to_string(), Value::String("deny".to_string()));
+            obj.insert("message".to_string(), Value::String(deny.message));
+            if deny.interrupt {
+                obj.insert("interrupt".to_string(), Value::Bool(true));
+            }
+            Value::Object(obj)
+        }
+    };
+    Ok(output)
+}
+
+async fn handle_hook_callback_request(
+    state: &QuerySharedState,
+    request_data: &Map<String, Value>,
+) -> Result<Value> {
+    let callback_id = request_data
+        .get("callback_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| Error::Other("Missing callback_id in hook_callback".to_string()))?;
+    let callback = state
+        .hook_callbacks
+        .lock()
+        .await
+        .get(callback_id)
+        .cloned()
+        .ok_or_else(|| Error::Other(format!("No hook callback found for ID: {callback_id}")))?;
+    let input = request_data.get("input").cloned().unwrap_or(Value::Null);
+    let tool_use_id = request_data
+        .get("tool_use_id")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let callback_future = panic::catch_unwind(AssertUnwindSafe(|| {
+        callback(input, tool_use_id, Default::default())
+    }))
+    .map_err(|payload| callback_panic_error("hook", payload))?;
+    let output = await_callback_with_panic_isolation("hook", callback_future).await?;
+    Ok(convert_hook_output_for_cli(output))
+}
+
+async fn handle_mcp_message_request(
+    state: &QuerySharedState,
+    request_data: &Map<String, Value>,
+) -> Result<Value> {
+    let server_name = request_data
+        .get("server_name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| Error::Other("Missing server_name in mcp_message".to_string()))?;
+    let message = request_data
+        .get("message")
+        .cloned()
+        .ok_or_else(|| Error::Other("Missing message in mcp_message".to_string()))?;
+    let response = handle_sdk_mcp_request(&state.sdk_mcp_servers, server_name, &message).await;
+    Ok(json!({ "mcp_response": response }))
+}
+
 /// Handles an incoming control request from the CLI within the background task.
 async fn handle_control_request(state: &QuerySharedState, request: Value) -> Result<()> {
     let Some(request_obj) = request.as_object() else {
@@ -726,101 +891,9 @@ async fn handle_control_request(state: &QuerySharedState, request: Value) -> Res
         .ok_or_else(|| Error::Other("Missing request subtype".to_string()))?;
 
     let result: Result<Value> = match subtype {
-        "can_use_tool" => {
-            let callback = state.can_use_tool.clone().ok_or_else(|| {
-                Error::Other("canUseTool callback is not provided".to_string())
-            })?;
-            let tool_name = request_data
-                .get("tool_name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            let input = request_data
-                .get("input")
-                .cloned()
-                .unwrap_or_else(|| json!({}));
-            let suggestions = request_data
-                .get("permission_suggestions")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|value| serde_json::from_value(value).ok())
-                .collect();
-            let context = ToolPermissionContext { suggestions };
-
-            let callback_result = callback(tool_name, input.clone(), context).await?;
-            let output = match callback_result {
-                PermissionResult::Allow(allow) => {
-                    let mut obj = Map::new();
-                    obj.insert("behavior".to_string(), Value::String("allow".to_string()));
-                    obj.insert(
-                        "updatedInput".to_string(),
-                        allow.updated_input.unwrap_or(input),
-                    );
-                    if let Some(updated_permissions) = allow.updated_permissions {
-                        let permissions_json: Vec<Value> = updated_permissions
-                            .into_iter()
-                            .map(|permission| permission.to_cli_dict())
-                            .collect();
-                        obj.insert(
-                            "updatedPermissions".to_string(),
-                            Value::Array(permissions_json),
-                        );
-                    }
-                    Value::Object(obj)
-                }
-                PermissionResult::Deny(deny) => {
-                    let mut obj = Map::new();
-                    obj.insert("behavior".to_string(), Value::String("deny".to_string()));
-                    obj.insert("message".to_string(), Value::String(deny.message));
-                    if deny.interrupt {
-                        obj.insert("interrupt".to_string(), Value::Bool(true));
-                    }
-                    Value::Object(obj)
-                }
-            };
-            Ok(output)
-        }
-        "hook_callback" => {
-            let callback_id = request_data
-                .get("callback_id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    Error::Other("Missing callback_id in hook_callback".to_string())
-                })?;
-            let callback = state
-                .hook_callbacks
-                .lock()
-                .await
-                .get(callback_id)
-                .cloned()
-                .ok_or_else(|| {
-                    Error::Other(format!("No hook callback found for ID: {callback_id}"))
-                })?;
-            let input = request_data.get("input").cloned().unwrap_or(Value::Null);
-            let tool_use_id = request_data
-                .get("tool_use_id")
-                .and_then(Value::as_str)
-                .map(ToString::to_string);
-            let output = callback(input, tool_use_id, Default::default()).await?;
-            Ok(convert_hook_output_for_cli(output))
-        }
-        "mcp_message" => {
-            let server_name = request_data
-                .get("server_name")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    Error::Other("Missing server_name in mcp_message".to_string())
-                })?;
-            let message = request_data
-                .get("message")
-                .cloned()
-                .ok_or_else(|| Error::Other("Missing message in mcp_message".to_string()))?;
-            let response =
-                handle_sdk_mcp_request(&state.sdk_mcp_servers, server_name, &message).await;
-            Ok(json!({ "mcp_response": response }))
-        }
+        "can_use_tool" => handle_can_use_tool_request(state, request_data).await,
+        "hook_callback" => handle_hook_callback_request(state, request_data).await,
+        "mcp_message" => handle_mcp_message_request(state, request_data).await,
         _ => Err(Error::Other(format!(
             "Unsupported control request subtype: {subtype}"
         ))),
