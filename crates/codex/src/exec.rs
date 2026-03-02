@@ -69,6 +69,15 @@ impl CodexExec {
     ///
     /// When `executable_path_override` is not supplied, the executable is
     /// discovered from standard local and global install locations.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use codex::CodexExec;
+    ///
+    /// let _exec = CodexExec::new(None, None, None)?;
+    /// # Ok::<(), codex::Error>(())
+    /// ```
     pub fn new(
         executable_path_override: Option<String>,
         env_override: Option<HashMap<String, String>>,
@@ -92,6 +101,26 @@ impl CodexExec {
     /// The returned stream yields lines as they arrive and finishes only after
     /// the subprocess exits successfully. Non-zero exit status is returned as
     /// [`Error::Process`].
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use codex::{CodexExec, CodexExecArgs};
+    /// use futures::StreamExt;
+    ///
+    /// # async fn example() -> codex::Result<()> {
+    /// let exec = CodexExec::new(None, None, None)?;
+    /// let mut stream = exec
+    ///     .run(CodexExecArgs {
+    ///         input: "Say hello".to_string(),
+    ///         ..Default::default()
+    ///     })
+    ///     .await?;
+    ///
+    /// let _first = stream.next().await;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn run(&self, args: CodexExecArgs) -> Result<BoxStream<'static, Result<String>>> {
         if args
             .cancellation_token

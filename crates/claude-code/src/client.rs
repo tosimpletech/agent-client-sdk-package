@@ -4,7 +4,7 @@
 //! for multi-turn conversations. Use this when you need to send follow-up queries,
 //! interrupt operations, or manage the session lifecycle manually.
 //!
-//! For one-off queries without session management, see [`query()`](crate::query).
+//! For one-off queries without session management, see [`query()`](crate::query_fn::query).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,7 +32,9 @@ use crate::types::{ClaudeAgentOptions, McpServerConfig, McpServersOption, Messag
 ///   callbacks.
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputPrompt {
+    /// One plain-text prompt.
     Text(String),
+    /// Pre-built structured protocol messages.
     Messages(Vec<Value>),
 }
 
@@ -62,13 +64,13 @@ pub enum InputPrompt {
 /// ```rust,no_run
 /// # use claude_code::{ClaudeSdkClient, InputPrompt, Message};
 /// # async fn example() -> claude_code::Result<()> {
-/// let mut client = ClaudeSdkClient::new(None, None);
-/// client.connect(None).await?;
+///     let mut client = ClaudeSdkClient::new(None, None);
+///     client.connect(None).await?;
 ///
-/// client.query(InputPrompt::Text("Hello!".into()), "session-1").await?;
-/// let messages = client.receive_response().await?;
+///     client.query(InputPrompt::Text("Hello!".into()), "session-1").await?;
+///     let messages = client.receive_response().await?;
 ///
-/// client.disconnect().await?;
+///     client.disconnect().await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -108,6 +110,14 @@ impl ClaudeSdkClient {
     ///   instances on each [`connect()`](Self::connect) call. If `None`, the default
     ///   [`SubprocessCliTransport`] is used. Using a factory enables reconnect after
     ///   disconnect with the same client instance.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::ClaudeSdkClient;
+    ///
+    /// let _client = ClaudeSdkClient::new(None, None);
+    /// ```
     pub fn new(
         options: Option<ClaudeAgentOptions>,
         transport_factory: Option<Box<dyn TransportFactory>>,
@@ -126,6 +136,16 @@ impl ClaudeSdkClient {
     /// `connect()` calls after [`disconnect()`](Self::disconnect) will return an error.
     /// For reconnect support with custom transports, use [`new()`](Self::new) with a
     /// [`TransportFactory`].
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::transport::subprocess_cli::{Prompt, SubprocessCliTransport};
+    /// use claude_code::ClaudeSdkClient;
+    ///
+    /// let transport = SubprocessCliTransport::new(Prompt::Messages, Default::default()).unwrap();
+    /// let _client = ClaudeSdkClient::new_with_transport(None, Box::new(transport));
+    /// ```
     pub fn new_with_transport(
         options: Option<ClaudeAgentOptions>,
         transport: Box<dyn Transport>,
@@ -211,6 +231,19 @@ impl ClaudeSdkClient {
     /// - `can_use_tool` is set with a `Text` prompt (requires `Messages`)
     /// - `can_use_tool` is set alongside `permission_prompt_tool_name`
     /// - The subprocess fails to start
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::{ClaudeSdkClient, InputPrompt};
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let mut client = ClaudeSdkClient::new(None, None);
+    /// client.connect(Some(InputPrompt::Text("Hello".to_string()))).await?;
+    /// client.disconnect().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn connect(&mut self, prompt: Option<InputPrompt>) -> Result<()> {
         self.handle_initial_message_stream_task(true).await?;
 
@@ -295,6 +328,24 @@ impl ClaudeSdkClient {
     ///
     /// Returns the same errors as [`connect()`](Self::connect), plus errors
     /// when starting the background stream task.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::ClaudeSdkClient;
+    /// use futures::stream;
+    /// use serde_json::json;
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let mut client = ClaudeSdkClient::new(None, None);
+    /// client.connect_with_messages(stream::iter(vec![
+    ///     json!({"type":"user","message":{"role":"user","content":"hello"}}),
+    /// ])).await?;
+    /// client.wait_for_initial_messages().await?;
+    /// client.disconnect().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn connect_with_messages<S>(&mut self, prompt: S) -> Result<()>
     where
         S: Stream<Item = Value> + Send + Unpin + 'static,
@@ -315,6 +366,18 @@ impl ClaudeSdkClient {
     ///
     /// This is only relevant after calling [`connect_with_messages()`](Self::connect_with_messages).
     /// If no background stream is active, this returns immediately.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::ClaudeSdkClient;
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let mut client = ClaudeSdkClient::new(None, None);
+    /// client.wait_for_initial_messages().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn wait_for_initial_messages(&mut self) -> Result<()> {
         self.handle_initial_message_stream_task(false).await
     }
@@ -333,6 +396,20 @@ impl ClaudeSdkClient {
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::{ClaudeSdkClient, InputPrompt};
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let mut client = ClaudeSdkClient::new(None, None);
+    /// client.connect(None).await?;
+    /// client.query(InputPrompt::Text("Summarize this repo".into()), "default").await?;
+    /// client.disconnect().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn query(&self, prompt: InputPrompt, session_id: &str) -> Result<()> {
         let query = self.query.as_ref().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
@@ -367,6 +444,27 @@ impl ClaudeSdkClient {
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::ClaudeSdkClient;
+    /// use futures::stream;
+    /// use serde_json::json;
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let mut client = ClaudeSdkClient::new(None, None);
+    /// client.connect(None).await?;
+    /// client
+    ///     .query_stream(
+    ///         stream::iter(vec![json!({"type":"user","message":{"role":"user","content":"hello"}})]),
+    ///         "default",
+    ///     )
+    ///     .await?;
+    /// client.disconnect().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn query_stream<S>(&self, prompt: S, session_id: &str) -> Result<()>
     where
         S: Stream<Item = Value> + Unpin,
@@ -396,6 +494,20 @@ impl ClaudeSdkClient {
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::ClaudeSdkClient;
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let mut client = ClaudeSdkClient::new(None, None);
+    /// client.connect(None).await?;
+    /// let _next = client.receive_message().await?;
+    /// client.disconnect().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn receive_message(&mut self) -> Result<Option<Message>> {
         let query = self.query.as_mut().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
@@ -410,6 +522,21 @@ impl ClaudeSdkClient {
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::{ClaudeSdkClient, InputPrompt};
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let mut client = ClaudeSdkClient::new(None, None);
+    /// client.connect(None).await?;
+    /// client.query(InputPrompt::Text("Hi".into()), "default").await?;
+    /// let _messages = client.receive_response().await?;
+    /// client.disconnect().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn receive_response(&mut self) -> Result<Vec<Message>> {
         let mut messages = Vec::new();
         while let Some(message) = self.receive_message().await? {
@@ -427,6 +554,20 @@ impl ClaudeSdkClient {
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::ClaudeSdkClient;
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let mut client = ClaudeSdkClient::new(None, None);
+    /// client.connect(None).await?;
+    /// client.interrupt().await?;
+    /// client.disconnect().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn interrupt(&self) -> Result<()> {
         let query = self.query.as_ref().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
@@ -441,6 +582,20 @@ impl ClaudeSdkClient {
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::ClaudeSdkClient;
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let mut client = ClaudeSdkClient::new(None, None);
+    /// client.connect(None).await?;
+    /// client.set_permission_mode("plan").await?;
+    /// client.disconnect().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn set_permission_mode(&self, mode: &str) -> Result<()> {
         let query = self.query.as_ref().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
@@ -455,6 +610,20 @@ impl ClaudeSdkClient {
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::ClaudeSdkClient;
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let mut client = ClaudeSdkClient::new(None, None);
+    /// client.connect(None).await?;
+    /// client.set_model(Some("sonnet")).await?;
+    /// client.disconnect().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn set_model(&self, model: Option<&str>) -> Result<()> {
         let query = self.query.as_ref().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
@@ -469,6 +638,20 @@ impl ClaudeSdkClient {
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::ClaudeSdkClient;
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let mut client = ClaudeSdkClient::new(None, None);
+    /// client.connect(None).await?;
+    /// client.rewind_files("user-msg-1").await?;
+    /// client.disconnect().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn rewind_files(&self, user_message_id: &str) -> Result<()> {
         let query = self.query.as_ref().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
@@ -483,6 +666,20 @@ impl ClaudeSdkClient {
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::ClaudeSdkClient;
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let mut client = ClaudeSdkClient::new(None, None);
+    /// client.connect(None).await?;
+    /// let _status = client.get_mcp_status().await?;
+    /// client.disconnect().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn get_mcp_status(&self) -> Result<Value> {
         let query = self.query.as_ref().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
@@ -497,6 +694,20 @@ impl ClaudeSdkClient {
     /// # Errors
     ///
     /// Returns [`CLIConnectionError`] if not connected.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::ClaudeSdkClient;
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let mut client = ClaudeSdkClient::new(None, None);
+    /// client.connect(None).await?;
+    /// let _info = client.get_server_info()?;
+    /// client.disconnect().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn get_server_info(&self) -> Result<Option<Value>> {
         let query = self.query.as_ref().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
@@ -509,6 +720,19 @@ impl ClaudeSdkClient {
     /// Disconnects from the Claude Code CLI and closes the session.
     ///
     /// After disconnecting, the client can be reconnected with [`connect()`](Self::connect).
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::ClaudeSdkClient;
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let mut client = ClaudeSdkClient::new(None, None);
+    /// client.connect(None).await?;
+    /// client.disconnect().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn disconnect(&mut self) -> Result<()> {
         self.handle_initial_message_stream_task(true).await?;
         if let Some(query) = self.query.take() {

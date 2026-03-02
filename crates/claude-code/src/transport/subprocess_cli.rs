@@ -63,6 +63,14 @@ pub struct JsonStreamBuffer {
 
 impl JsonStreamBuffer {
     /// Creates a new `JsonStreamBuffer` with the given maximum buffer size.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::JsonStreamBuffer;
+    ///
+    /// let _buffer = JsonStreamBuffer::new(1024 * 1024);
+    /// ```
     pub fn new(max_buffer_size: usize) -> Self {
         Self {
             buffer: String::new(),
@@ -83,6 +91,16 @@ impl JsonStreamBuffer {
     /// # Errors
     ///
     /// Returns [`CLIJSONDecodeError`] if the buffer exceeds the maximum size.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::JsonStreamBuffer;
+    ///
+    /// let mut buffer = JsonStreamBuffer::new(1024);
+    /// let parsed = buffer.push_chunk("{\"type\":\"system\"}\n").unwrap();
+    /// assert_eq!(parsed.len(), 1);
+    /// ```
     pub fn push_chunk(
         &mut self,
         chunk: &str,
@@ -168,6 +186,14 @@ impl SubprocessCliTransport {
     /// # Errors
     ///
     /// Returns [`CLINotFoundError`] if the CLI executable cannot be located.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::transport::subprocess_cli::{Prompt, SubprocessCliTransport};
+    ///
+    /// let _transport = SubprocessCliTransport::new(Prompt::Messages, Default::default()).unwrap();
+    /// ```
     pub fn new(prompt: Prompt, options: ClaudeAgentOptions) -> Result<Self> {
         let cli_path = match &options.cli_path {
             Some(path) => path.to_string_lossy().to_string(),
@@ -438,6 +464,16 @@ impl SubprocessCliTransport {
     /// # Returns
     ///
     /// A `Vec<String>` where the first element is the CLI path and the rest are arguments.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::transport::subprocess_cli::{Prompt, SubprocessCliTransport};
+    ///
+    /// let transport = SubprocessCliTransport::new(Prompt::Messages, Default::default()).unwrap();
+    /// let args = transport.build_command().unwrap();
+    /// assert!(args.iter().any(|arg| arg == "--input-format"));
+    /// ```
     pub fn build_command(&self) -> Result<Vec<String>> {
         let mut cmd = vec![
             self.cli_path.clone(),

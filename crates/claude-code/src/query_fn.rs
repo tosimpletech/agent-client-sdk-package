@@ -40,7 +40,7 @@ use serde_json::Value;
 /// ```rust,no_run
 /// # use claude_code::{query, ClaudeAgentOptions, InputPrompt, Message, PermissionMode};
 /// # async fn example() -> claude_code::Result<()> {
-/// let messages = query(
+///     let messages = query(
 ///     InputPrompt::Text("Explain Rust ownership".to_string()),
 ///     Some(ClaudeAgentOptions {
 ///         permission_mode: Some(PermissionMode::BypassPermissions),
@@ -48,13 +48,13 @@ use serde_json::Value;
 ///         ..Default::default()
 ///     }),
 ///     None,
-/// ).await?;
+///     ).await?;
 ///
-/// for msg in &messages {
+///     for msg in &messages {
 ///     if let Message::Result(result) = msg {
 ///         println!("Cost: ${:.4}", result.total_cost_usd.unwrap_or(0.0));
 ///     }
-/// }
+///     }
 /// # Ok(())
 /// # }
 /// ```
@@ -71,6 +71,26 @@ pub async fn query(
 /// Sends a one-off query using streamed JSON input messages.
 ///
 /// This is a Rust-idiomatic equivalent of Python's `AsyncIterable` prompt mode.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use claude_code::{query_from_stream, ClaudeAgentOptions};
+/// use futures::stream;
+/// use serde_json::json;
+///
+/// # async fn example() -> claude_code::Result<()> {
+///     let messages = query_from_stream(
+///     stream::iter(vec![json!({"type":"user","message":{"role":"user","content":"hello"}})]),
+///     Some(ClaudeAgentOptions::default()),
+///     None,
+///     )
+///     .await?;
+///
+///     assert!(!messages.is_empty());
+/// # Ok(())
+/// # }
+/// ```
 pub async fn query_from_stream<S>(
     prompt: S,
     options: Option<ClaudeAgentOptions>,
@@ -91,6 +111,25 @@ where
 /// The returned stream yields parsed [`Message`] values as they arrive.
 ///
 /// The stream is `Send` and can be consumed from any tokio task.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use claude_code::{query_stream, InputPrompt};
+/// use futures::StreamExt;
+///
+/// # async fn example() -> claude_code::Result<()> {
+///     let mut stream = query_stream(
+///     InputPrompt::Text("Summarize Rust ownership".to_string()),
+///     None,
+///     None,
+///     )
+///     .await?;
+///
+///     let _ = stream.next().await;
+/// # Ok(())
+/// # }
+/// ```
 pub async fn query_stream(
     prompt: InputPrompt,
     options: Option<ClaudeAgentOptions>,
@@ -106,6 +145,26 @@ pub async fn query_stream(
 /// Sends a one-off query with streamed input and streamed output.
 ///
 /// The returned stream is `Send` and can be consumed from any tokio task.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use claude_code::query_stream_from_stream;
+/// use futures::{stream, StreamExt};
+/// use serde_json::json;
+///
+/// # async fn example() -> claude_code::Result<()> {
+///     let mut output = query_stream_from_stream(
+///     stream::iter(vec![json!({"type":"user","message":{"role":"user","content":"hello"}})]),
+///     None,
+///     None,
+///     )
+///     .await?;
+///
+///     let _ = output.next().await;
+/// # Ok(())
+/// # }
+/// ```
 pub async fn query_stream_from_stream<S>(
     prompt: S,
     options: Option<ClaudeAgentOptions>,

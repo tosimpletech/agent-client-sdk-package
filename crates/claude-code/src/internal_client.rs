@@ -3,8 +3,8 @@
 //! This module provides [`InternalClient`], a stateless helper that manages
 //! the full lifecycle of a single query: connect → initialize → send → receive → close.
 //!
-//! This is used internally by the [`query()`](crate::query) convenience function.
-//! Most users should use [`query()`](crate::query) or [`ClaudeSdkClient`](crate::ClaudeSdkClient)
+//! This is used internally by the [`query()`](crate::query_fn::query) convenience function.
+//! Most users should use [`query()`](crate::query_fn::query) or [`ClaudeSdkClient`](crate::ClaudeSdkClient)
 //! directly.
 
 use std::collections::HashMap;
@@ -39,6 +39,14 @@ impl Default for InternalClient {
 
 impl InternalClient {
     /// Creates a new `InternalClient`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::internal_client::InternalClient;
+    ///
+    /// let _client = InternalClient::new();
+    /// ```
     pub fn new() -> Self {
         Self
     }
@@ -184,6 +192,25 @@ impl InternalClient {
     }
 
     /// Executes a complete query lifecycle: connect, send, receive all messages, and close.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::internal_client::InternalClient;
+    /// use claude_code::{InputPrompt, ClaudeAgentOptions};
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let client = InternalClient::new();
+    /// let _messages = client
+    ///     .process_query(
+    ///         InputPrompt::Text("hello".to_string()),
+    ///         ClaudeAgentOptions::default(),
+    ///         None,
+    ///     )
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn process_query(
         &self,
         prompt: InputPrompt,
@@ -206,6 +233,27 @@ impl InternalClient {
     }
 
     /// Executes a one-shot query where input messages are provided as a stream.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::internal_client::InternalClient;
+    /// use claude_code::ClaudeAgentOptions;
+    /// use futures::stream;
+    /// use serde_json::json;
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let client = InternalClient::new();
+    /// let _messages = client
+    ///     .process_query_from_stream(
+    ///         stream::iter(vec![json!({"type":"user","message":{"role":"user","content":"hello"}})]),
+    ///         ClaudeAgentOptions::default(),
+    ///         None,
+    ///     )
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn process_query_from_stream<S>(
         &self,
         prompt: S,
@@ -226,6 +274,28 @@ impl InternalClient {
     /// Executes a one-shot query and returns a streaming response interface.
     ///
     /// The returned stream is `Send` and can be consumed from any tokio task.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::internal_client::InternalClient;
+    /// use claude_code::{InputPrompt, ClaudeAgentOptions};
+    /// use futures::StreamExt;
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let client = InternalClient::new();
+    /// let mut stream = client
+    ///     .process_query_as_stream(
+    ///         InputPrompt::Text("hello".to_string()),
+    ///         ClaudeAgentOptions::default(),
+    ///         None,
+    ///     )
+    ///     .await?;
+    ///
+    /// let _ = stream.next().await;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn process_query_as_stream(
         &self,
         prompt: InputPrompt,
@@ -246,6 +316,29 @@ impl InternalClient {
     }
 
     /// Executes a one-shot streamed-input query and returns a streaming response interface.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::internal_client::InternalClient;
+    /// use claude_code::ClaudeAgentOptions;
+    /// use futures::{stream, StreamExt};
+    /// use serde_json::json;
+    ///
+    /// # async fn example() -> claude_code::Result<()> {
+    /// let client = InternalClient::new();
+    /// let mut stream = client
+    ///     .process_query_from_stream_as_stream(
+    ///         stream::iter(vec![json!({"type":"user","message":{"role":"user","content":"hello"}})]),
+    ///         ClaudeAgentOptions::default(),
+    ///         None,
+    ///     )
+    ///     .await?;
+    ///
+    /// let _ = stream.next().await;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn process_query_from_stream_as_stream<S>(
         &self,
         prompt: S,

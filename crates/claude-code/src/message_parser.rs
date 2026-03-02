@@ -126,6 +126,21 @@ fn parse_content_blocks(blocks: &[Value], include_thinking: bool) -> Vec<Content
 /// | `"system"` | [`Message::System`] |
 /// | `"result"` | [`Message::Result`] |
 /// | `"stream_event"` | [`Message::StreamEvent`] |
+///
+/// # Example
+///
+/// ```rust
+/// use claude_code::{parse_message, Message};
+/// use serde_json::json;
+///
+/// let raw = json!({
+///     "type": "system",
+///     "subtype": "initialized"
+/// });
+///
+/// let parsed = parse_message(&raw).unwrap();
+/// assert!(matches!(parsed, Some(Message::System(_))));
+/// ```
 pub fn parse_message(data: &Value) -> std::result::Result<Option<Message>, MessageParseError> {
     let Some(obj) = data.as_object() else {
         return Err(MessageParseError::new(

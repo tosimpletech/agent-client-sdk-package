@@ -1,7 +1,13 @@
 //! # Codex SDK for Rust
 //!
-//! Rust implementation of the Codex SDK that wraps the `codex` CLI and exchanges
+//! Embed Codex in Rust applications by wrapping the `codex` CLI and exchanging
 //! JSONL events over stdin/stdout.
+//!
+//! ## When To Use Which API
+//!
+//! - Use [`Thread::run`] when you only need the final turn result.
+//! - Use [`Thread::run_streamed`] when you need progress events while the turn runs.
+//! - Use [`Codex::resume_thread`] when continuing an existing saved thread.
 //!
 //! ## Quickstart
 //!
@@ -11,15 +17,79 @@
 //! # async fn example() -> codex::Result<()> {
 //! let codex = Codex::new(None)?;
 //! let thread = codex.start_thread(None);
-//! let turn = thread.run("Diagnose the test failure and propose a fix", None).await?;
+//! let turn = thread
+//!     .run("Diagnose the test failure and propose a fix", None)
+//!     .await?;
 //!
-//! println!("{}", turn.final_response);
+//! println!("response: {}", turn.final_response);
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! Reuse the same [`Thread`] for follow-up turns to continue the
-//! same conversation context.
+//! ## Continue The Same Thread
+//!
+//! ```rust,no_run
+//! use codex::Codex;
+//!
+//! # async fn example() -> codex::Result<()> {
+//! let codex = Codex::new(None)?;
+//! let thread = codex.start_thread(None);
+//! let _first = thread.run("Inspect failing tests", None).await?;
+//! let second = thread.run("Apply a fix", None).await?;
+//! println!("{}", second.final_response);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Stream Events
+//!
+//! ```rust,no_run
+//! use codex::{Codex, ThreadEvent};
+//! use futures::StreamExt;
+//!
+//! # async fn example() -> codex::Result<()> {
+//! let codex = Codex::new(None)?;
+//! let thread = codex.start_thread(None);
+//! let mut events = thread.run_streamed("Analyze repository state", None).await?.events;
+//!
+//! while let Some(event) = events.next().await {
+//!     if let ThreadEvent::TurnCompleted { usage } = event? {
+//!         println!("usage: {:?}", usage);
+//!     }
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Structured Output
+//!
+//! ```rust,no_run
+//! use codex::{Codex, TurnOptions};
+//! use serde_json::json;
+//!
+//! # async fn example() -> codex::Result<()> {
+//! let codex = Codex::new(None)?;
+//! let thread = codex.start_thread(None);
+//! let schema = json!({
+//!     "type": "object",
+//!     "properties": { "summary": { "type": "string" } },
+//!     "required": ["summary"],
+//!     "additionalProperties": false
+//! });
+//!
+//! let turn = thread
+//!     .run(
+//!         "Summarize the repository status",
+//!         Some(TurnOptions {
+//!             output_schema: Some(schema),
+//!             ..Default::default()
+//!         }),
+//!     )
+//!     .await?;
+//! println!("{}", turn.final_response);
+//! # Ok(())
+//! # }
+//! ```
 
 /// High-level client used to start and resume Codex threads.
 pub mod codex;
