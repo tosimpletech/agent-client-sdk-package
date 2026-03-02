@@ -178,7 +178,7 @@ impl ClaudeSdkClient {
         query.initialize().await?;
 
         if let Some(InputPrompt::Messages(messages)) = prompt {
-            query.stream_input(messages).await?;
+            query.send_input_messages(messages).await?;
         }
 
         self.query = Some(query);
@@ -256,7 +256,7 @@ impl ClaudeSdkClient {
             }
             message
         });
-        query.stream_input_from_stream(mapped).await
+        query.send_input_from_stream(mapped).await
     }
 
     /// Receives a single message from the current query.

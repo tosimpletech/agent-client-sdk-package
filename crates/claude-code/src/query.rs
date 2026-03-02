@@ -582,6 +582,31 @@ impl Query {
         self.transport.write(&(message.to_string() + "\n")).await
     }
 
+    /// Sends multiple input messages to the CLI without closing stdin.
+    ///
+    /// This is used by session-based client flows where additional turns
+    /// will be sent later on the same connection.
+    pub async fn send_input_messages(&mut self, messages: Vec<Value>) -> Result<()> {
+        for message in messages {
+            self.send_raw_message(message).await?;
+        }
+        Ok(())
+    }
+
+    /// Sends streamed input messages to the CLI without closing stdin.
+    ///
+    /// This is used by session-based client flows where callers stream input
+    /// incrementally but need to keep the session writable for future turns.
+    pub async fn send_input_from_stream<S>(&mut self, mut messages: S) -> Result<()>
+    where
+        S: Stream<Item = Value> + Unpin,
+    {
+        while let Some(message) = messages.next().await {
+            self.send_raw_message(message).await?;
+        }
+        Ok(())
+    }
+
     /// Streams multiple messages to the CLI and closes the input stream.
     ///
     /// Used for batch-style interactions where all input is provided upfront.
@@ -591,10 +616,7 @@ impl Query {
     /// the CLI to send control requests (hook callbacks, MCP messages) that
     /// require responses to be written back over stdin.
     pub async fn stream_input(&mut self, messages: Vec<Value>) -> Result<()> {
-        for message in messages {
-            self.send_raw_message(message).await?;
-        }
-
+        self.send_input_messages(messages).await?;
         self.finalize_stream_input().await
     }
 
@@ -606,10 +628,7 @@ impl Query {
     where
         S: Stream<Item = Value> + Unpin,
     {
-        while let Some(message) = messages.next().await {
-            self.send_raw_message(message).await?;
-        }
-
+        self.send_input_from_stream(&mut messages).await?;
         self.finalize_stream_input().await
     }
 

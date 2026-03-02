@@ -132,11 +132,20 @@ impl InternalClient {
 
     async fn collect_messages(mut query: Query) -> Result<Vec<Message>> {
         let mut messages = Vec::new();
-        while let Some(message) = query.receive_next_message().await? {
-            messages.push(message);
+        let read_result: Result<()> = async {
+            while let Some(message) = query.receive_next_message().await? {
+                messages.push(message);
+            }
+            Ok(())
         }
-        query.close().await?;
-        Ok(messages)
+        .await;
+        let close_result = query.close().await;
+
+        match (read_result, close_result) {
+            (Err(err), _) => Err(err),
+            (Ok(()), Err(err)) => Err(err),
+            (Ok(()), Ok(())) => Ok(messages),
+        }
     }
 
     fn into_message_stream(query: Query) -> LocalBoxStream<'static, Result<Message>> {

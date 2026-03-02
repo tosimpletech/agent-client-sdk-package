@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use claude_code::{
-    InputPrompt, Message, Result, Transport, query_from_stream, query_stream,
+    Error, InputPrompt, Message, Result, Transport, query, query_from_stream, query_stream,
     query_stream_from_stream,
 };
 use futures::TryStreamExt;
@@ -164,4 +164,72 @@ async fn test_query_stream_from_stream_streams_both_directions() {
     assert_eq!(messages.len(), 2);
     assert!(messages.iter().any(|m| matches!(m, Message::Assistant(_))));
     assert!(messages.iter().any(|m| matches!(m, Message::Result(_))));
+}
+
+#[derive(Clone, Default)]
+struct FailingReadTransport {
+    state: Arc<Mutex<FailingReadState>>,
+}
+
+#[derive(Default)]
+struct FailingReadState {
+    close_calls: usize,
+    read_calls: usize,
+    writes: Vec<String>,
+}
+
+#[async_trait]
+impl Transport for FailingReadTransport {
+    async fn connect(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    async fn write(&mut self, data: &str) -> Result<()> {
+        self.state.lock().await.writes.push(data.to_string());
+        Ok(())
+    }
+
+    async fn end_input(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    async fn read_next_message(&mut self) -> Result<Option<Value>> {
+        let mut state = self.state.lock().await;
+        state.read_calls += 1;
+        if state.read_calls == 1 {
+            Ok(Some(json!({
+                "type": "control_response",
+                "response": {"subtype": "success", "request_id": "req_1", "response": {}}
+            })))
+        } else {
+            Err(Error::Other("forced read failure".to_string()))
+        }
+    }
+
+    async fn close(&mut self) -> Result<()> {
+        self.state.lock().await.close_calls += 1;
+        Ok(())
+    }
+
+    fn is_ready(&self) -> bool {
+        true
+    }
+}
+
+#[tokio::test]
+async fn test_one_shot_query_closes_transport_on_read_error() {
+    let transport = FailingReadTransport::default();
+    let state = transport.state.clone();
+
+    let err = query(
+        InputPrompt::Text("trigger error".to_string()),
+        None,
+        Some(Box::new(transport)),
+    )
+    .await
+    .expect_err("must fail");
+
+    assert!(err.to_string().contains("forced read failure"));
+    let state = state.lock().await;
+    assert_eq!(state.close_calls, 1);
 }

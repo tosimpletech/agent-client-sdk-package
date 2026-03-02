@@ -871,6 +871,25 @@ impl Transport for SubprocessCliTransport {
     }
 }
 
+impl Drop for SubprocessCliTransport {
+    fn drop(&mut self) {
+        self.ready = false;
+        self.stdin.take();
+        self.stdout.take();
+
+        if let Some(child) = &mut self.child
+            && child.try_wait().ok().flatten().is_none()
+        {
+            let _ = child.start_kill();
+        }
+        self.child = None;
+
+        if let Some(task) = self.stderr_task.take() {
+            task.abort();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::SubprocessCliTransport;

@@ -12,6 +12,7 @@ struct MockTransportState {
     written_messages: Vec<String>,
     messages_to_read: VecDeque<Value>,
     connected: bool,
+    end_input_calls: usize,
 }
 
 #[derive(Clone, Default)]
@@ -25,6 +26,7 @@ impl MockTransport {
             written_messages: Vec::new(),
             messages_to_read: messages.into_iter().collect(),
             connected: false,
+            end_input_calls: 0,
         };
         Self {
             state: Arc::new(Mutex::new(state)),
@@ -49,6 +51,7 @@ impl Transport for MockTransport {
     }
 
     async fn end_input(&mut self) -> Result<()> {
+        self.state.lock().await.end_input_calls += 1;
         Ok(())
     }
 
@@ -219,4 +222,68 @@ async fn test_query_stream_injects_session_id() {
         msg.contains("\"content\":\"hello stream\"")
             && msg.contains("\"session_id\":\"stream-session\"")
     }));
+    assert_eq!(state.end_input_calls, 0);
+}
+
+#[tokio::test]
+async fn test_query_stream_keeps_session_open_for_follow_up_query() {
+    let transport = MockTransport::with_messages(vec![json!({
+        "type": "control_response",
+        "response": {"subtype": "success", "request_id": "req_1", "response": {}}
+    })]);
+    let state = transport.state.clone();
+
+    let mut client = ClaudeSdkClient::new(None, Some(Box::new(transport)));
+    client.connect(None).await.expect("connect");
+    let streamed = stream::iter(vec![json!({
+        "type": "user",
+        "message": {"role": "user", "content": "first turn"},
+        "parent_tool_use_id": null
+    })]);
+    client
+        .query_stream(streamed, "session-1")
+        .await
+        .expect("query_stream");
+    client
+        .query(InputPrompt::Text("second turn".to_string()), "session-1")
+        .await
+        .expect("follow-up query");
+
+    let state = state.lock().await;
+    assert!(
+        state
+            .written_messages
+            .iter()
+            .any(|msg| msg.contains("\"content\":\"first turn\""))
+    );
+    assert!(
+        state
+            .written_messages
+            .iter()
+            .any(|msg| msg.contains("\"content\":\"second turn\""))
+    );
+    assert_eq!(state.end_input_calls, 0);
+}
+
+#[tokio::test]
+async fn test_connect_with_messages_does_not_close_stdin() {
+    let transport = MockTransport::with_messages(vec![json!({
+        "type": "control_response",
+        "response": {"subtype": "success", "request_id": "req_1", "response": {}}
+    })]);
+    let state = transport.state.clone();
+
+    let mut client = ClaudeSdkClient::new(None, Some(Box::new(transport)));
+    client
+        .connect(Some(InputPrompt::Messages(vec![json!({
+            "type": "user",
+            "message": {"role": "user", "content": "init message"},
+            "session_id": "init",
+            "parent_tool_use_id": null
+        })])))
+        .await
+        .expect("connect with messages");
+
+    let state = state.lock().await;
+    assert_eq!(state.end_input_calls, 0);
 }
