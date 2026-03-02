@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use semver::Version;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -280,75 +281,27 @@ impl SubprocessCliTransport {
             return Ok(uid);
         }
 
-        // Look up username via thread-safe getpwnam_r.
-        use std::ffi::CString;
-        use std::ptr;
-
-        let c_user = CString::new(user)
-            .map_err(|_| Error::Other(format!("Invalid user name (contains null byte): {user}")))?;
-
-        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
-        let mut result: *mut libc::passwd = ptr::null_mut();
-        let mut buffer_len = {
-            let configured = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
-            if configured <= 0 {
-                16 * 1024
-            } else {
-                configured as usize
-            }
-        };
-
-        loop {
-            let mut buffer = vec![0u8; buffer_len];
-            let rc = unsafe {
-                libc::getpwnam_r(
-                    c_user.as_ptr(),
-                    &mut pwd,
-                    buffer.as_mut_ptr().cast(),
-                    buffer.len(),
-                    &mut result,
-                )
-            };
-
-            if rc == 0 {
-                if result.is_null() {
-                    return Err(Error::Other(format!("User not found: {user}")));
-                }
-                return Ok(pwd.pw_uid);
-            }
-
-            if rc == libc::ERANGE {
-                buffer_len = buffer_len.saturating_mul(2);
-                if buffer_len > 1024 * 1024 {
-                    return Err(Error::Other(format!(
-                        "Failed to resolve user '{user}': lookup buffer exceeded 1MB"
-                    )));
-                }
-                continue;
-            }
-
+        if user.as_bytes().contains(&0) {
             return Err(Error::Other(format!(
-                "Failed to resolve user '{user}': {}",
-                std::io::Error::from_raw_os_error(rc)
+                "Invalid user name (contains null byte): {user}"
             )));
         }
+
+        // Look up username via nix's safe Unix user APIs.
+        let found = nix::unistd::User::from_name(user)
+            .map_err(|err| Error::Other(format!("Failed to resolve user '{user}': {err}")))?;
+        let entry = found.ok_or_else(|| Error::Other(format!("User not found: {user}")))?;
+        Ok(entry.uid.as_raw())
     }
 
     fn parse_semver_prefix(version: &str) -> Option<[u32; 3]> {
-        let mut parts = [0u32; 3];
-        let mut iter = version.trim().split('.');
-        for slot in &mut parts {
-            let component = iter.next()?;
-            let digits: String = component
-                .chars()
-                .take_while(|ch| ch.is_ascii_digit())
-                .collect();
-            if digits.is_empty() {
-                return None;
-            }
-            *slot = digits.parse().ok()?;
-        }
-        Some(parts)
+        let token = version.split_whitespace().next().unwrap_or_default();
+        let parsed = Version::parse(token).ok()?;
+        Some([
+            u32::try_from(parsed.major).ok()?,
+            u32::try_from(parsed.minor).ok()?,
+            u32::try_from(parsed.patch).ok()?,
+        ])
     }
 
     async fn check_claude_version(&self) {
@@ -1135,6 +1088,14 @@ mod tests {
     }
 
     #[test]
+    fn parse_semver_prefix_supports_trailing_text_after_whitespace() {
+        assert_eq!(
+            SubprocessCliTransport::parse_semver_prefix("2.4.1 (stable channel)"),
+            Some([2, 4, 1])
+        );
+    }
+
+    #[test]
     fn parse_semver_prefix_rejects_invalid_version() {
         assert_eq!(SubprocessCliTransport::parse_semver_prefix("invalid"), None);
     }
@@ -1142,10 +1103,22 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn resolve_user_to_uid_accepts_numeric_uid() {
-        let uid = unsafe { libc::getuid() };
+        let uid = nix::unistd::Uid::current().as_raw();
         let resolved = SubprocessCliTransport::resolve_user_to_uid(&uid.to_string())
             .expect("resolve numeric uid");
         assert_eq!(resolved, uid);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_user_to_uid_accepts_current_username() {
+        let current_uid = nix::unistd::Uid::current();
+        let user = nix::unistd::User::from_uid(current_uid)
+            .expect("lookup current uid")
+            .expect("current uid should map to a user");
+        let resolved = SubprocessCliTransport::resolve_user_to_uid(&user.name)
+            .expect("resolve current username");
+        assert_eq!(resolved, current_uid.as_raw());
     }
 
     #[cfg(unix)]
@@ -1154,5 +1127,13 @@ mod tests {
         let user = format!("__claude_code_sdk_nonexistent_{}__", std::process::id());
         let err = SubprocessCliTransport::resolve_user_to_uid(&user).expect_err("must fail");
         assert!(err.to_string().contains("User not found"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_user_to_uid_rejects_null_byte_in_username() {
+        let err =
+            SubprocessCliTransport::resolve_user_to_uid("name\0with-null").expect_err("must fail");
+        assert!(err.to_string().contains("Invalid user name"));
     }
 }
