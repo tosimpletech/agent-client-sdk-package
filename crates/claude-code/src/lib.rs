@@ -88,7 +88,7 @@ pub use errors::{
 };
 pub use message_parser::parse_message;
 pub use query::Query;
-pub use query_fn::query;
+pub use query_fn::{query, query_from_stream, query_stream, query_stream_from_stream};
 pub use sdk_mcp::{McpSdkServer, SdkMcpTool, create_sdk_mcp_server, tool};
 pub use transport::Transport;
 pub use transport::subprocess_cli::{

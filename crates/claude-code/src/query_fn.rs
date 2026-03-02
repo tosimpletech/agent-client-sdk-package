@@ -12,6 +12,9 @@ use crate::errors::Result;
 use crate::internal_client::InternalClient;
 use crate::transport::Transport;
 use crate::types::{ClaudeAgentOptions, Message};
+use futures::Stream;
+use futures::stream::LocalBoxStream;
+use serde_json::Value;
 
 /// Sends a one-off query to Claude Code and returns all response messages.
 ///
@@ -63,4 +66,53 @@ pub async fn query(
     let options = options.unwrap_or_default();
     let client = InternalClient::new();
     client.process_query(prompt, options, transport).await
+}
+
+/// Sends a one-off query using streamed JSON input messages.
+///
+/// This is a Rust-idiomatic equivalent of Python's `AsyncIterable` prompt mode.
+pub async fn query_from_stream<S>(
+    prompt: S,
+    options: Option<ClaudeAgentOptions>,
+    transport: Option<Box<dyn Transport>>,
+) -> Result<Vec<Message>>
+where
+    S: Stream<Item = Value> + Unpin,
+{
+    let options = options.unwrap_or_default();
+    let client = InternalClient::new();
+    client
+        .process_query_from_stream(prompt, options, transport)
+        .await
+}
+
+/// Sends a one-off query and returns responses as a stream.
+///
+/// The returned stream yields parsed [`Message`] values as they arrive.
+pub async fn query_stream(
+    prompt: InputPrompt,
+    options: Option<ClaudeAgentOptions>,
+    transport: Option<Box<dyn Transport>>,
+) -> Result<LocalBoxStream<'static, Result<Message>>> {
+    let options = options.unwrap_or_default();
+    let client = InternalClient::new();
+    client
+        .process_query_as_stream(prompt, options, transport)
+        .await
+}
+
+/// Sends a one-off query with streamed input and streamed output.
+pub async fn query_stream_from_stream<S>(
+    prompt: S,
+    options: Option<ClaudeAgentOptions>,
+    transport: Option<Box<dyn Transport>>,
+) -> Result<LocalBoxStream<'static, Result<Message>>>
+where
+    S: Stream<Item = Value> + Unpin,
+{
+    let options = options.unwrap_or_default();
+    let client = InternalClient::new();
+    client
+        .process_query_from_stream_as_stream(prompt, options, transport)
+        .await
 }

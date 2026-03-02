@@ -10,6 +10,7 @@ use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -28,6 +29,7 @@ use crate::types::{
 
 /// Default maximum buffer size for JSON stream parsing (1 MB).
 pub const DEFAULT_MAX_BUFFER_SIZE: usize = 1024 * 1024;
+const MINIMUM_CLAUDE_CODE_VERSION: &str = "2.0.0";
 
 /// Prompt type for the transport layer.
 ///
@@ -192,6 +194,10 @@ impl SubprocessCliTransport {
 
     /// Locates the Claude Code CLI binary by searching PATH and common locations.
     fn find_cli() -> std::result::Result<String, CLINotFoundError> {
+        if let Some(path) = Self::find_bundled_cli() {
+            return Ok(path);
+        }
+
         if let Ok(path) = which::which("claude") {
             return Ok(path.to_string_lossy().to_string());
         }
@@ -232,6 +238,36 @@ impl SubprocessCliTransport {
         ))
     }
 
+    /// Attempts to locate a bundled Claude Code CLI binary.
+    fn find_bundled_cli() -> Option<String> {
+        if let Ok(path) = std::env::var("CLAUDE_CODE_BUNDLED_CLI") {
+            let candidate = PathBuf::from(path);
+            if candidate.is_file() {
+                return Some(candidate.to_string_lossy().to_string());
+            }
+        }
+
+        let cli_name = if cfg!(windows) {
+            "claude.exe"
+        } else {
+            "claude"
+        };
+        let mut candidates = Vec::new();
+        if let Ok(current_exe) = std::env::current_exe()
+            && let Some(exe_dir) = current_exe.parent()
+        {
+            candidates.push(exe_dir.join("_bundled").join(cli_name));
+            candidates.push(exe_dir.join("..").join("_bundled").join(cli_name));
+        }
+
+        for candidate in candidates {
+            if candidate.is_file() {
+                return Some(candidate.to_string_lossy().to_string());
+            }
+        }
+        None
+    }
+
     /// Resolves a user identifier (username string or numeric UID) to a Unix UID.
     ///
     /// Supports both numeric UIDs (e.g., `"1000"`) and username strings (e.g., `"nobody"`).
@@ -241,18 +277,110 @@ impl SubprocessCliTransport {
         if let Ok(uid) = user.parse::<u32>() {
             return Ok(uid);
         }
-        // Look up username via libc getpwnam.
+
+        // Look up username via thread-safe getpwnam_r.
         use std::ffi::CString;
-        let c_user = CString::new(user).map_err(|_| {
-            Error::Other(format!("Invalid user name (contains null byte): {user}"))
-        })?;
-        // SAFETY: getpwnam is safe to call with a valid CString. We check the result for null.
-        let pw = unsafe { libc::getpwnam(c_user.as_ptr()) };
-        if pw.is_null() {
-            return Err(Error::Other(format!("User not found: {user}")));
+        use std::ptr;
+
+        let c_user = CString::new(user)
+            .map_err(|_| Error::Other(format!("Invalid user name (contains null byte): {user}")))?;
+
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut result: *mut libc::passwd = ptr::null_mut();
+        let mut buffer_len = {
+            let configured = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
+            if configured <= 0 {
+                16 * 1024
+            } else {
+                configured as usize
+            }
+        };
+
+        loop {
+            let mut buffer = vec![0u8; buffer_len];
+            let rc = unsafe {
+                libc::getpwnam_r(
+                    c_user.as_ptr(),
+                    &mut pwd,
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut result,
+                )
+            };
+
+            if rc == 0 {
+                if result.is_null() {
+                    return Err(Error::Other(format!("User not found: {user}")));
+                }
+                return Ok(pwd.pw_uid);
+            }
+
+            if rc == libc::ERANGE {
+                buffer_len = buffer_len.saturating_mul(2);
+                if buffer_len > 1024 * 1024 {
+                    return Err(Error::Other(format!(
+                        "Failed to resolve user '{user}': lookup buffer exceeded 1MB"
+                    )));
+                }
+                continue;
+            }
+
+            return Err(Error::Other(format!(
+                "Failed to resolve user '{user}': {}",
+                std::io::Error::from_raw_os_error(rc)
+            )));
         }
-        // SAFETY: pw is non-null and points to a valid passwd struct.
-        Ok(unsafe { (*pw).pw_uid })
+    }
+
+    fn parse_semver_prefix(version: &str) -> Option<[u32; 3]> {
+        let mut parts = [0u32; 3];
+        let mut iter = version.trim().split('.');
+        for slot in &mut parts {
+            let component = iter.next()?;
+            let digits: String = component
+                .chars()
+                .take_while(|ch| ch.is_ascii_digit())
+                .collect();
+            if digits.is_empty() {
+                return None;
+            }
+            *slot = digits.parse().ok()?;
+        }
+        Some(parts)
+    }
+
+    async fn check_claude_version(&self) {
+        if std::env::var("CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK").is_ok() {
+            return;
+        }
+
+        let mut command = Command::new(&self.cli_path);
+        command.arg("-v");
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::null());
+
+        let output = tokio::time::timeout(Duration::from_secs(2), command.output()).await;
+        let Ok(Ok(output)) = output else {
+            return;
+        };
+        if !output.status.success() {
+            return;
+        }
+
+        let version_output = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let Some(version) = Self::parse_semver_prefix(&version_output) else {
+            return;
+        };
+        let Some(minimum) = Self::parse_semver_prefix(MINIMUM_CLAUDE_CODE_VERSION) else {
+            return;
+        };
+
+        if version < minimum {
+            eprintln!(
+                "Warning: Claude Code version {} is unsupported in the Agent SDK. Minimum required version is {}. Some features may not work correctly.",
+                version_output, MINIMUM_CLAUDE_CODE_VERSION
+            );
+        }
     }
 
     /// Converts a `PermissionMode` enum variant to its CLI string representation.
@@ -536,6 +664,8 @@ impl Transport for SubprocessCliTransport {
             return Ok(());
         }
 
+        self.check_claude_version().await;
+
         if let Some(cwd) = &self.cwd
             && !cwd.exists()
         {
@@ -738,5 +868,48 @@ impl Transport for SubprocessCliTransport {
 
     fn is_ready(&self) -> bool {
         self.ready
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SubprocessCliTransport;
+
+    #[test]
+    fn parse_semver_prefix_supports_plain_version() {
+        assert_eq!(
+            SubprocessCliTransport::parse_semver_prefix("2.4.1"),
+            Some([2, 4, 1])
+        );
+    }
+
+    #[test]
+    fn parse_semver_prefix_supports_prefixed_version() {
+        assert_eq!(
+            SubprocessCliTransport::parse_semver_prefix("2.4.1-beta.1"),
+            Some([2, 4, 1])
+        );
+    }
+
+    #[test]
+    fn parse_semver_prefix_rejects_invalid_version() {
+        assert_eq!(SubprocessCliTransport::parse_semver_prefix("invalid"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_user_to_uid_accepts_numeric_uid() {
+        let uid = unsafe { libc::getuid() };
+        let resolved = SubprocessCliTransport::resolve_user_to_uid(&uid.to_string())
+            .expect("resolve numeric uid");
+        assert_eq!(resolved, uid);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_user_to_uid_rejects_unknown_user() {
+        let user = format!("__claude_code_sdk_nonexistent_{}__", std::process::id());
+        let err = SubprocessCliTransport::resolve_user_to_uid(&user).expect_err("must fail");
+        assert!(err.to_string().contains("User not found"));
     }
 }

@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use claude_code::{
-    Query, Result, ToolAnnotations, Transport, create_sdk_mcp_server, tool,
-};
+use claude_code::{Query, Result, ToolAnnotations, Transport, create_sdk_mcp_server, tool};
 use serde_json::{Value, json};
 
 #[derive(Default)]
@@ -63,9 +61,7 @@ async fn test_tool_creation_and_call() {
 #[tokio::test]
 async fn test_tool_error_handling() {
     let fail_tool = tool("fail", "Always fails", json!({}), |_args| async move {
-        Err(claude_code::Error::Other(
-            "Expected error".to_string(),
-        ))
+        Err(claude_code::Error::Other("Expected error".to_string()))
     });
 
     let server = create_sdk_mcp_server("error-test", "1.0.0", vec![fail_tool]);

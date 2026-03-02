@@ -36,9 +36,7 @@ fn test_assistant_message_with_thinking() {
         signature: "sig-123".to_string(),
     };
     let msg = AssistantMessage {
-        content: vec![claude_code::ContentBlock::Thinking(
-            thinking_block.clone(),
-        )],
+        content: vec![claude_code::ContentBlock::Thinking(thinking_block.clone())],
         model: "claude-opus-4-1-20250805".to_string(),
         parent_tool_use_id: None,
         error: None,

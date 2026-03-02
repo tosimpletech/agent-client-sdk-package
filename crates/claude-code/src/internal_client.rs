@@ -10,6 +10,11 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use futures::stream::LocalBoxStream;
+use futures::{Stream, StreamExt};
+use serde_json::Value;
+use serde_json::json;
+
 use crate::client::InputPrompt;
 use crate::errors::{Error, Result};
 use crate::query::Query;
@@ -51,6 +56,119 @@ impl InternalClient {
         servers
     }
 
+    fn configure_options(
+        options: ClaudeAgentOptions,
+        is_text_prompt: bool,
+    ) -> Result<ClaudeAgentOptions> {
+        if options.can_use_tool.is_some() && is_text_prompt {
+            return Err(Error::Other(
+                "can_use_tool callback requires streaming mode. Please provide prompt as messages."
+                    .to_string(),
+            ));
+        }
+
+        if options.can_use_tool.is_some() && options.permission_prompt_tool_name.is_some() {
+            return Err(Error::Other(
+                "can_use_tool callback cannot be used with permission_prompt_tool_name."
+                    .to_string(),
+            ));
+        }
+
+        let mut configured_options = options;
+        if configured_options.can_use_tool.is_some() {
+            configured_options.permission_prompt_tool_name = Some("stdio".to_string());
+        }
+        Ok(configured_options)
+    }
+
+    async fn initialize_query(
+        &self,
+        transport_prompt: TransportPrompt,
+        options: ClaudeAgentOptions,
+        transport: Option<Box<dyn Transport>>,
+    ) -> Result<Query> {
+        let mut chosen_transport: Box<dyn Transport> = if let Some(transport) = transport {
+            transport
+        } else {
+            Box::new(SubprocessCliTransport::new(
+                transport_prompt,
+                options.clone(),
+            )?)
+        };
+        chosen_transport.connect().await?;
+
+        let mut query = Query::new(
+            chosen_transport,
+            true,
+            options.can_use_tool.clone(),
+            options.hooks.clone(),
+            Some(Self::extract_sdk_mcp_servers(&options)),
+            options.agents.clone(),
+            Duration::from_secs(60),
+        );
+        query.start().await?;
+        query.initialize().await?;
+        Ok(query)
+    }
+
+    async fn send_prompt(query: &mut Query, prompt: InputPrompt) -> Result<()> {
+        match prompt {
+            InputPrompt::Text(text) => {
+                query
+                    .stream_input(vec![json!({
+                        "type": "user",
+                        "message": {"role": "user", "content": text},
+                        "parent_tool_use_id": Value::Null,
+                        "session_id": ""
+                    })])
+                    .await?;
+            }
+            InputPrompt::Messages(messages) => {
+                query.stream_input(messages).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn collect_messages(mut query: Query) -> Result<Vec<Message>> {
+        let mut messages = Vec::new();
+        while let Some(message) = query.receive_next_message().await? {
+            messages.push(message);
+        }
+        query.close().await?;
+        Ok(messages)
+    }
+
+    fn into_message_stream(query: Query) -> LocalBoxStream<'static, Result<Message>> {
+        struct QueryStreamState {
+            query: Query,
+            done: bool,
+        }
+
+        futures::stream::try_unfold(
+            QueryStreamState { query, done: false },
+            |mut state| async move {
+                if state.done {
+                    return Ok(None);
+                }
+
+                match state.query.receive_next_message().await {
+                    Ok(Some(message)) => Ok(Some((message, state))),
+                    Ok(None) => {
+                        state.done = true;
+                        state.query.close().await?;
+                        Ok(None)
+                    }
+                    Err(err) => {
+                        let _ = state.query.close().await;
+                        Err(err)
+                    }
+                }
+            },
+        )
+        .boxed_local()
+    }
+
     /// Executes a complete query lifecycle: connect, send, receive all messages, and close.
     ///
     /// # Arguments
@@ -75,67 +193,74 @@ impl InternalClient {
         options: ClaudeAgentOptions,
         transport: Option<Box<dyn Transport>>,
     ) -> Result<Vec<Message>> {
-        if options.can_use_tool.is_some() && matches!(prompt, InputPrompt::Text(_)) {
-            return Err(Error::Other(
-                "can_use_tool callback requires streaming mode. Please provide prompt as messages."
-                    .to_string(),
-            ));
-        }
-
-        if options.can_use_tool.is_some() && options.permission_prompt_tool_name.is_some() {
-            return Err(Error::Other(
-                "can_use_tool callback cannot be used with permission_prompt_tool_name."
-                    .to_string(),
-            ));
-        }
-
-        let mut configured_options = options.clone();
-        if configured_options.can_use_tool.is_some() {
-            configured_options.permission_prompt_tool_name = Some("stdio".to_string());
-        }
+        let configured_options =
+            Self::configure_options(options, matches!(prompt, InputPrompt::Text(_)))?;
 
         let transport_prompt = match &prompt {
             InputPrompt::Text(text) => TransportPrompt::Text(text.clone()),
             InputPrompt::Messages(_) => TransportPrompt::Messages,
         };
 
-        let mut chosen_transport: Box<dyn Transport> = if let Some(transport) = transport {
-            transport
-        } else {
-            Box::new(SubprocessCliTransport::new(
-                transport_prompt,
-                configured_options.clone(),
-            )?)
+        let mut query = self
+            .initialize_query(transport_prompt, configured_options, transport)
+            .await?;
+        Self::send_prompt(&mut query, prompt).await?;
+        Self::collect_messages(query).await
+    }
+
+    /// Executes a one-shot query where input messages are provided as a stream.
+    pub async fn process_query_from_stream<S>(
+        &self,
+        prompt: S,
+        options: ClaudeAgentOptions,
+        transport: Option<Box<dyn Transport>>,
+    ) -> Result<Vec<Message>>
+    where
+        S: Stream<Item = Value> + Unpin,
+    {
+        let configured_options = Self::configure_options(options, false)?;
+        let mut query = self
+            .initialize_query(TransportPrompt::Messages, configured_options, transport)
+            .await?;
+        query.stream_input_from_stream(prompt).await?;
+        Self::collect_messages(query).await
+    }
+
+    /// Executes a one-shot query and returns a streaming response interface.
+    pub async fn process_query_as_stream(
+        &self,
+        prompt: InputPrompt,
+        options: ClaudeAgentOptions,
+        transport: Option<Box<dyn Transport>>,
+    ) -> Result<LocalBoxStream<'static, Result<Message>>> {
+        let configured_options =
+            Self::configure_options(options, matches!(prompt, InputPrompt::Text(_)))?;
+        let transport_prompt = match &prompt {
+            InputPrompt::Text(text) => TransportPrompt::Text(text.clone()),
+            InputPrompt::Messages(_) => TransportPrompt::Messages,
         };
-        chosen_transport.connect().await?;
+        let mut query = self
+            .initialize_query(transport_prompt, configured_options, transport)
+            .await?;
+        Self::send_prompt(&mut query, prompt).await?;
+        Ok(Self::into_message_stream(query))
+    }
 
-        let mut query = Query::new(
-            chosen_transport,
-            true,
-            configured_options.can_use_tool.clone(),
-            configured_options.hooks.clone(),
-            Some(Self::extract_sdk_mcp_servers(&configured_options)),
-            configured_options.agents.clone(),
-            Duration::from_secs(60),
-        );
-        query.start().await?;
-        query.initialize().await?;
-
-        match prompt {
-            InputPrompt::Text(text) => {
-                query.send_user_message(&text, "").await?;
-                query.end_input().await?;
-            }
-            InputPrompt::Messages(messages) => {
-                query.stream_input(messages).await?;
-            }
-        }
-
-        let mut messages = Vec::new();
-        while let Some(message) = query.receive_next_message().await? {
-            messages.push(message);
-        }
-        query.close().await?;
-        Ok(messages)
+    /// Executes a one-shot streamed-input query and returns a streaming response interface.
+    pub async fn process_query_from_stream_as_stream<S>(
+        &self,
+        prompt: S,
+        options: ClaudeAgentOptions,
+        transport: Option<Box<dyn Transport>>,
+    ) -> Result<LocalBoxStream<'static, Result<Message>>>
+    where
+        S: Stream<Item = Value> + Unpin,
+    {
+        let configured_options = Self::configure_options(options, false)?;
+        let mut query = self
+            .initialize_query(TransportPrompt::Messages, configured_options, transport)
+            .await?;
+        query.stream_input_from_stream(prompt).await?;
+        Ok(Self::into_message_stream(query))
     }
 }

@@ -18,11 +18,9 @@ fn make_options() -> ClaudeAgentOptions {
 #[test]
 fn test_build_command_basic() {
     let options = make_options();
-    let transport = SubprocessCliTransport::new(
-        claude_code::Prompt::Text("Hello".to_string()),
-        options,
-    )
-    .expect("transport");
+    let transport =
+        SubprocessCliTransport::new(claude_code::Prompt::Text("Hello".to_string()), options)
+            .expect("transport");
     let cmd = transport.build_command().expect("command");
 
     assert_eq!(cmd[0], "/usr/bin/claude");
@@ -42,16 +40,16 @@ fn test_build_command_basic() {
 fn test_build_command_system_prompt_variants() {
     let mut options = make_options();
     options.system_prompt = Some(SystemPrompt::Text("Be helpful".to_string()));
-    let transport = SubprocessCliTransport::new(claude_code::Prompt::Messages, options)
-        .expect("transport");
+    let transport =
+        SubprocessCliTransport::new(claude_code::Prompt::Messages, options).expect("transport");
     let cmd = transport.build_command().expect("command");
     assert!(cmd.contains(&"--system-prompt".to_string()));
     assert!(cmd.contains(&"Be helpful".to_string()));
 
     let mut options = make_options();
     options.system_prompt = Some(SystemPrompt::Preset(SystemPromptPreset::default()));
-    let transport = SubprocessCliTransport::new(claude_code::Prompt::Messages, options)
-        .expect("transport");
+    let transport =
+        SubprocessCliTransport::new(claude_code::Prompt::Messages, options).expect("transport");
     let cmd = transport.build_command().expect("command");
     assert!(!cmd.contains(&"--append-system-prompt".to_string()));
 
@@ -60,8 +58,8 @@ fn test_build_command_system_prompt_variants() {
         append: Some("Be concise.".to_string()),
         ..Default::default()
     }));
-    let transport = SubprocessCliTransport::new(claude_code::Prompt::Messages, options)
-        .expect("transport");
+    let transport =
+        SubprocessCliTransport::new(claude_code::Prompt::Messages, options).expect("transport");
     let cmd = transport.build_command().expect("command");
     assert!(cmd.contains(&"--append-system-prompt".to_string()));
     assert!(cmd.contains(&"Be concise.".to_string()));
@@ -78,8 +76,8 @@ fn test_build_command_with_options() {
     options.fallback_model = Some("sonnet".to_string());
     options.max_thinking_tokens = Some(5000);
 
-    let transport = SubprocessCliTransport::new(claude_code::Prompt::Messages, options)
-        .expect("transport");
+    let transport =
+        SubprocessCliTransport::new(claude_code::Prompt::Messages, options).expect("transport");
     let cmd = transport.build_command().expect("command");
 
     assert!(cmd.contains(&"--allowedTools".to_string()));
@@ -106,24 +104,24 @@ fn test_build_command_tools_variants() {
         "Edit".to_string(),
         "Bash".to_string(),
     ]));
-    let transport = SubprocessCliTransport::new(claude_code::Prompt::Messages, options)
-        .expect("transport");
+    let transport =
+        SubprocessCliTransport::new(claude_code::Prompt::Messages, options).expect("transport");
     let cmd = transport.build_command().expect("command");
     let idx = cmd.iter().position(|x| x == "--tools").expect("tools flag");
     assert_eq!(cmd[idx + 1], "Read,Edit,Bash");
 
     let mut options = make_options();
     options.tools = Some(ToolsOption::List(vec![]));
-    let transport = SubprocessCliTransport::new(claude_code::Prompt::Messages, options)
-        .expect("transport");
+    let transport =
+        SubprocessCliTransport::new(claude_code::Prompt::Messages, options).expect("transport");
     let cmd = transport.build_command().expect("command");
     let idx = cmd.iter().position(|x| x == "--tools").expect("tools flag");
     assert_eq!(cmd[idx + 1], "");
 
     let mut options = make_options();
     options.tools = Some(ToolsOption::Preset(ToolsPreset::default()));
-    let transport = SubprocessCliTransport::new(claude_code::Prompt::Messages, options)
-        .expect("transport");
+    let transport =
+        SubprocessCliTransport::new(claude_code::Prompt::Messages, options).expect("transport");
     let cmd = transport.build_command().expect("command");
     let idx = cmd.iter().position(|x| x == "--tools").expect("tools flag");
     assert_eq!(cmd[idx + 1], "default");
@@ -146,8 +144,8 @@ fn test_build_command_with_sandbox_and_settings_merge() {
         ..Default::default()
     });
 
-    let transport = SubprocessCliTransport::new(claude_code::Prompt::Messages, options)
-        .expect("transport");
+    let transport =
+        SubprocessCliTransport::new(claude_code::Prompt::Messages, options).expect("transport");
     let cmd = transport.build_command().expect("command");
     let idx = cmd
         .iter()
@@ -179,8 +177,8 @@ fn test_build_command_with_mcp_servers() {
     options.setting_sources = Some(vec![SettingSource::User, SettingSource::Project]);
     options.thinking = Some(ThinkingConfig::Adaptive);
 
-    let transport = SubprocessCliTransport::new(claude_code::Prompt::Messages, options)
-        .expect("transport");
+    let transport =
+        SubprocessCliTransport::new(claude_code::Prompt::Messages, options).expect("transport");
     let cmd = transport.build_command().expect("command");
 
     assert!(cmd.contains(&"--mcp-config".to_string()));

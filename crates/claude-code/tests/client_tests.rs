@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use claude_code::{ClaudeSdkClient, InputPrompt, Message, Result, Transport};
+use futures::stream;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
@@ -191,4 +192,31 @@ async fn test_errors_when_not_connected() {
 
     let err = client.interrupt().await.expect_err("must fail");
     assert!(err.to_string().contains("Not connected"));
+}
+
+#[tokio::test]
+async fn test_query_stream_injects_session_id() {
+    let transport = MockTransport::with_messages(vec![json!({
+        "type": "control_response",
+        "response": {"subtype": "success", "request_id": "req_1", "response": {}}
+    })]);
+    let state = transport.state.clone();
+
+    let mut client = ClaudeSdkClient::new(None, Some(Box::new(transport)));
+    client.connect(None).await.expect("connect");
+    let input = stream::iter(vec![json!({
+        "type": "user",
+        "message": {"role": "user", "content": "hello stream"},
+        "parent_tool_use_id": null
+    })]);
+    client
+        .query_stream(input, "stream-session")
+        .await
+        .expect("query_stream");
+
+    let state = state.lock().await;
+    assert!(state.written_messages.iter().any(|msg| {
+        msg.contains("\"content\":\"hello stream\"")
+            && msg.contains("\"session_id\":\"stream-session\"")
+    }));
 }

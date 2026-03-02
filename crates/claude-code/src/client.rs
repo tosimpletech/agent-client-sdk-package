@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use futures::{Stream, StreamExt};
 use serde_json::Value;
 
 use crate::errors::{CLIConnectionError, Error, Result};
@@ -226,6 +227,36 @@ impl ClaudeSdkClient {
         }
 
         Ok(())
+    }
+
+    /// Streams JSON message prompts within the current session.
+    ///
+    /// Each streamed message is sent as it arrives. If a message object does not
+    /// include `session_id`, this method injects the provided `session_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CLIConnectionError`] if not connected.
+    pub async fn query_stream<S>(&mut self, prompt: S, session_id: &str) -> Result<()>
+    where
+        S: Stream<Item = Value> + Unpin,
+    {
+        let query = self.query.as_mut().ok_or_else(|| {
+            Error::CLIConnection(CLIConnectionError::new(
+                "Not connected. Call connect() first.",
+            ))
+        })?;
+
+        let session_id = session_id.to_string();
+        let mapped = prompt.map(move |mut message| {
+            if let Value::Object(ref mut obj) = message
+                && !obj.contains_key("session_id")
+            {
+                obj.insert("session_id".to_string(), Value::String(session_id.clone()));
+            }
+            message
+        });
+        query.stream_input_from_stream(mapped).await
     }
 
     /// Receives a single message from the current query.

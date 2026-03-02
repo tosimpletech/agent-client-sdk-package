@@ -14,6 +14,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
+use futures::{Stream, StreamExt};
 use serde_json::{Map, Value, json};
 use tracing::debug;
 
@@ -594,6 +595,25 @@ impl Query {
             self.send_raw_message(message).await?;
         }
 
+        self.finalize_stream_input().await
+    }
+
+    /// Streams messages from an async stream source and closes the input stream.
+    ///
+    /// This is a Rust-idiomatic equivalent of Python's `AsyncIterable` prompt mode.
+    /// Messages are written as they arrive from the stream.
+    pub async fn stream_input_from_stream<S>(&mut self, mut messages: S) -> Result<()>
+    where
+        S: Stream<Item = Value> + Unpin,
+    {
+        while let Some(message) = messages.next().await {
+            self.send_raw_message(message).await?;
+        }
+
+        self.finalize_stream_input().await
+    }
+
+    async fn finalize_stream_input(&mut self) -> Result<()> {
         let has_hooks = !self.hooks.is_empty();
         let has_sdk_mcp = !self.sdk_mcp_servers.is_empty();
 
