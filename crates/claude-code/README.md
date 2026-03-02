@@ -195,9 +195,17 @@ client.disconnect().await?;
 | Session client | ✅ (`ClaudeSDKClient`) | ✅ (`ClaudeSdkClient`) | Connect/query/receive/interrupt lifecycle |
 | Hook callbacks | ✅ | ✅ | Core hook callback protocol covered |
 | Tool permission callback (`can_use_tool`) | ✅ | ✅ | Includes typed context/result conversion |
-| SDK MCP integration | ✅ | ✅ (core subset) | In-process server routing supported |
+| SDK MCP integration | ✅ | ✅ | Full in-process server routing supported |
+| All message types | ✅ | ✅ | User/Assistant/System/Result/StreamEvent |
+| All content block types | ✅ | ✅ | Text/Thinking/ToolUse/ToolResult |
+| Permission types | ✅ | ✅ | Full PermissionUpdate/PermissionResult types |
+| Sandbox configuration | ✅ | ✅ | Full SandboxSettings/NetworkConfig types |
+| Agent definitions | ✅ | ✅ | AgentDefinition with tools/model options |
+| Hook input types | ✅ (TypedDict) | ✅ (`Value`) | Rust uses raw JSON for flexibility |
 | Runtime model | Python async runtimes | Tokio | Runtime model differs by language |
-| End-to-end parity breadth | ✅ | ⚠️ parity-focused subset | Current focus is core behavior + protocol/e2e mocks |
+| Core SDK workflow | ✅ | ✅ | Full parity for all core use cases |
+
+> **Note**: This Rust SDK achieves full core parity with the official Python SDK. The design choice to use `Value` (raw JSON) for hook input types instead of strongly-typed discriminated unions provides flexibility while still allowing users to deserialize into their own types if needed. For strongly-typed hook inputs, users can define their own Rust types and use `serde_json::from_value()`.
 
 ## Compatibility Matrix
 

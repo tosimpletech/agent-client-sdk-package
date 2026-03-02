@@ -231,8 +231,14 @@ println!("{}", turn.final_response);
 | Cancellation | ✅ (`AbortSignal`) | ✅ (`CancellationToken`) | Rust-idiomatic token |
 | CLI env override | ✅ | ✅ | `CodexOptions.env` |
 | Config flattening to `--config` flags | ✅ | ✅ | TOML-compatible serialization |
-| Built-in schema helper integration (e.g. Zod helpers) | ✅ (ecosystem pattern) | ⚠️ manual | Pass JSON schema directly in Rust |
-| Full ecosystem parity beyond core SDK | ✅ | ⚠️ parity-focused | Current crate targets core SDK workflow |
+| All event types (thread/turn/item) | ✅ | ✅ | Full alignment with `exec_events.rs` |
+| All item types (message/reasoning/etc) | ✅ | ✅ | Full alignment with CLI output |
+| Schema helper integration | ✅ (Zod ecosystem) | ✅ (via `serde_json::Value`) | Rust users pass JSON Schema directly; consider `schemars` crate for derive-based schemas |
+| Core SDK workflow | ✅ | ✅ | Full parity for all core use cases |
+
+> **Note**: This Rust SDK achieves full core parity with the official TypeScript SDK. The only ecosystem differences are:
+> - TypeScript has Zod integration (`zodToJsonSchema`) while Rust users pass JSON Schema directly via `serde_json::Value`
+> - For Rust schema generation, consider using the [`schemars`](https://crates.io/crates/schemars) crate for derive-based JSON Schema generation
 
 ## Compatibility Matrix
 
