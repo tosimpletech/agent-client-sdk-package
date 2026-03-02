@@ -195,9 +195,17 @@ client.disconnect().await?;
 | 会话客户端 | ✅（`ClaudeSDKClient`） | ✅（`ClaudeSdkClient`） | connect/query/receive/interrupt 生命周期 |
 | Hook 回调 | ✅ | ✅ | 核心回调协议已覆盖 |
 | 工具权限回调（`can_use_tool`） | ✅ | ✅ | 含上下文与结果类型转换 |
-| SDK MCP 集成 | ✅ | ✅（核心子集） | 支持进程内 server 路由 |
+| SDK MCP 集成 | ✅ | ✅ | 进程内 server 路由完整支持 |
+| 全部消息类型 | ✅ | ✅ | User/Assistant/System/Result/StreamEvent |
+| 全部内容块类型 | ✅ | ✅ | Text/Thinking/ToolUse/ToolResult |
+| 权限类型体系 | ✅ | ✅ | 完整 `PermissionUpdate` / `PermissionResult` |
+| 沙箱配置 | ✅ | ✅ | 完整 `SandboxSettings` / `NetworkConfig` |
+| Agent 定义 | ✅ | ✅ | `AgentDefinition`（含 tools/model） |
+| Hook 输入类型 | ✅（TypedDict） | ✅（`Value`） | Rust 采用原始 JSON 以保持灵活性 |
 | 运行时模型 | Python async runtimes | Tokio | 语言生态差异 |
-| E2E 对齐广度 | ✅ | ⚠️ 对齐优先子集 | 当前重点是核心行为与协议链路 |
+| 核心 SDK 工作流 | ✅ | ✅ | 核心用例已实现完整对齐 |
+
+> **说明**：该 Rust SDK 与官方 Python SDK 已实现核心能力完整对齐。Hook 输入类型使用 `Value`（原始 JSON）而非强类型判别联合体，是有意的设计选择：保持灵活性的同时，用户仍可按需通过 `serde_json::from_value()` 反序列化为自定义强类型。
 
 ## 兼容性矩阵
 

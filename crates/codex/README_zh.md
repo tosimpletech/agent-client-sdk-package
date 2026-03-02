@@ -231,8 +231,14 @@ println!("{}", turn.final_response);
 | 取消机制 | ✅（`AbortSignal`） | ✅（`CancellationToken`） | Rust 风格原语 |
 | 环境变量覆盖 | ✅ | ✅ | `CodexOptions.env` |
 | `--config` 展平透传 | ✅ | ✅ | TOML 兼容序列化 |
-| 内建 schema 辅助集成（如 Zod） | ✅（生态常见） | ⚠️ 手工 | Rust 需直接传 JSON Schema |
-| 核心外生态功能覆盖 | ✅ | ⚠️ 核心对齐优先 | 当前 crate 聚焦核心工作流 |
+| 全部事件类型（thread/turn/item） | ✅ | ✅ | 与 `exec_events.rs` 完整对齐 |
+| 全部条目类型（message/reasoning 等） | ✅ | ✅ | 与 CLI 输出完整对齐 |
+| Schema 辅助集成 | ✅（Zod 生态） | ✅（通过 `serde_json::Value`） | Rust 直接传 JSON Schema；可结合 `schemars` 生成 |
+| 核心 SDK 工作流 | ✅ | ✅ | 核心用例已实现完整对齐 |
+
+> **说明**：该 Rust SDK 与官方 TypeScript SDK 已实现核心能力完整对齐。主要差异仅在生态层：
+> - TypeScript 侧常见 Zod 集成（`zodToJsonSchema`），Rust 侧直接通过 `serde_json::Value` 传 JSON Schema
+> - Rust 若需 derive 式 schema 生成，可使用 [`schemars`](https://crates.io/crates/schemars)
 
 ## 兼容性矩阵
 
