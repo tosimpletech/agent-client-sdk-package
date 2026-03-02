@@ -9,7 +9,7 @@
 //! - Lifecycle management (interrupt, model change, rewind)
 //!
 //! Most users should use [`ClaudeSdkClient`](crate::ClaudeSdkClient) or
-//! [`query()`](crate::query) instead of interacting with this module directly.
+//! [`query()`](crate::query_fn::query) instead of interacting with this module directly.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -128,10 +128,10 @@ struct QuerySharedState {
 /// Low-level query session handler for Claude Code CLI communication.
 ///
 /// Manages the bidirectional JSON stream protocol between the SDK and the CLI.
-/// On [`start_with_state()`](Query::start_with_state), a background tokio task
+/// On startup, a background tokio task
 /// is spawned to continuously read messages from the transport and route them:
 ///
-/// - **Control responses** are delivered to the waiting [`send_control_request()`](Query::send_control_request) caller via oneshot channels.
+/// - **Control responses** are delivered to the waiting control-request caller via oneshot channels.
 /// - **Control requests** (permissions, hooks, MCP) are handled by the background task.
 /// - **SDK messages** (user, assistant, system, result) are parsed and delivered via an mpsc channel.
 ///
@@ -254,6 +254,19 @@ impl Query {
     /// and waits for the initialization response.
     ///
     /// Returns the initialization response payload, or `None` if not in streaming mode.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    /// use serde_json::Map;
+    /// use serde_json::Value;
+    ///
+    /// # async fn demo(query: &mut Query) -> claude_code::Result<()> {
+    /// let _ = query.initialize(Map::<String, Value>::new()).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn initialize(&mut self, hooks_config: Map<String, Value>) -> Result<Option<Value>> {
         if !self.is_streaming_mode {
             return Ok(None);
@@ -291,6 +304,16 @@ impl Query {
     /// Returns the initialization result from the CLI handshake.
     ///
     /// Returns `None` if [`initialize()`](Self::initialize) has not been called yet.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    ///
+    /// fn demo(query: &Query) {
+    ///     let _info = query.initialization_result();
+    /// }
+    /// ```
     pub fn initialization_result(&self) -> Option<Value> {
         self.initialization_result.clone()
     }
@@ -382,6 +405,17 @@ impl Query {
     }
 
     /// Sends a user text message to the CLI.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    ///
+    /// # async fn demo(query: &Query) -> claude_code::Result<()> {
+    /// query.send_user_message("hello", "default").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_user_message(&self, prompt: &str, session_id: &str) -> Result<()> {
         let message = json!({
             "type": "user",
@@ -393,6 +427,18 @@ impl Query {
     }
 
     /// Sends a raw JSON message to the CLI without any transformation.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    /// use serde_json::json;
+    ///
+    /// # async fn demo(query: &Query) -> claude_code::Result<()> {
+    /// query.send_raw_message(json!({"type":"user","message":{"role":"user","content":"hi"}})).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_raw_message(&self, message: Value) -> Result<()> {
         self.write_message(&message).await
     }
@@ -412,6 +458,20 @@ impl Query {
     }
 
     /// Sends multiple input messages to the CLI without closing stdin.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    /// use serde_json::json;
+    ///
+    /// # async fn demo(query: &Query) -> claude_code::Result<()> {
+    /// query
+    ///     .send_input_messages(vec![json!({"type":"user","message":{"role":"user","content":"hello"}})])
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_input_messages(&self, messages: Vec<Value>) -> Result<()> {
         for message in messages {
             self.send_raw_message(message).await?;
@@ -420,6 +480,21 @@ impl Query {
     }
 
     /// Sends streamed input messages to the CLI without closing stdin.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    /// use futures::stream;
+    /// use serde_json::json;
+    ///
+    /// # async fn demo(query: &Query) -> claude_code::Result<()> {
+    /// query
+    ///     .send_input_from_stream(stream::iter(vec![json!({"type":"user","message":{"role":"user","content":"hello"}})]))
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_input_from_stream<S>(&self, mut messages: S) -> Result<()>
     where
         S: Stream<Item = Value> + Unpin,
@@ -437,6 +512,22 @@ impl Query {
     ///
     /// The returned task completes when the input stream ends or a write error
     /// occurs. It does not close stdin.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    /// use futures::stream;
+    /// use serde_json::json;
+    ///
+    /// # async fn demo(query: &Query) -> claude_code::Result<()> {
+    /// let handle = query.spawn_input_from_stream(stream::iter(vec![
+    ///     json!({"type":"user","message":{"role":"user","content":"hello"}}),
+    /// ]))?;
+    /// handle.await??;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn spawn_input_from_stream<S>(&self, mut messages: S) -> Result<JoinHandle<Result<()>>>
     where
         S: Stream<Item = Value> + Send + Unpin + 'static,
@@ -464,12 +555,41 @@ impl Query {
     ///
     /// If SDK MCP servers or hooks are present, stdin close is deferred until
     /// the first result message is received (or a timeout expires).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    /// use serde_json::json;
+    ///
+    /// # async fn demo(query: &Query) -> claude_code::Result<()> {
+    /// query
+    ///     .stream_input(vec![json!({"type":"user","message":{"role":"user","content":"hello"}})])
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn stream_input(&self, messages: Vec<Value>) -> Result<()> {
         self.send_input_messages(messages).await?;
         self.finalize_stream_input().await
     }
 
     /// Streams messages from an async stream source and closes the input stream.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    /// use futures::stream;
+    /// use serde_json::json;
+    ///
+    /// # async fn demo(query: &Query) -> claude_code::Result<()> {
+    /// query
+    ///     .stream_input_from_stream(stream::iter(vec![json!({"type":"user","message":{"role":"user","content":"hello"}})]))
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn stream_input_from_stream<S>(&self, mut messages: S) -> Result<()>
     where
         S: Stream<Item = Value> + Unpin,
@@ -497,6 +617,17 @@ impl Query {
     }
 
     /// Closes the input stream without sending any messages.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    ///
+    /// # async fn demo(query: &Query) -> claude_code::Result<()> {
+    /// query.end_input().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn end_input(&self) -> Result<()> {
         let state = self
             .state
@@ -511,6 +642,19 @@ impl Query {
     /// Control messages are handled transparently by the background task.
     ///
     /// Returns `None` when the stream is exhausted (no more messages).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    ///
+    /// # async fn demo(query: &mut Query) -> claude_code::Result<()> {
+    /// while let Some(message) = query.receive_next_message().await? {
+    ///     println!("{message:?}");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn receive_next_message(&mut self) -> Result<Option<Message>> {
         let rx = self
             .message_rx
@@ -525,12 +669,34 @@ impl Query {
     }
 
     /// Queries the status of connected MCP servers via the CLI.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    ///
+    /// # async fn demo(query: &Query) -> claude_code::Result<()> {
+    /// let _status = query.get_mcp_status().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn get_mcp_status(&self) -> Result<Value> {
         self.send_control_request(json!({ "subtype": "mcp_status" }), Duration::from_secs(60))
             .await
     }
 
     /// Sends an interrupt signal to the CLI to stop the current operation.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    ///
+    /// # async fn demo(query: &Query) -> claude_code::Result<()> {
+    /// query.interrupt().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn interrupt(&self) -> Result<()> {
         self.send_control_request(json!({ "subtype": "interrupt" }), Duration::from_secs(60))
             .await?;
@@ -538,6 +704,17 @@ impl Query {
     }
 
     /// Changes the permission mode via a control request.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    ///
+    /// # async fn demo(query: &Query) -> claude_code::Result<()> {
+    /// query.set_permission_mode("plan").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn set_permission_mode(&self, mode: &str) -> Result<()> {
         self.send_control_request(
             json!({ "subtype": "set_permission_mode", "mode": mode }),
@@ -548,6 +725,17 @@ impl Query {
     }
 
     /// Changes the model used by the CLI via a control request.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    ///
+    /// # async fn demo(query: &Query) -> claude_code::Result<()> {
+    /// query.set_model(Some("sonnet")).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn set_model(&self, model: Option<&str>) -> Result<()> {
         self.send_control_request(
             json!({ "subtype": "set_model", "model": model }),
@@ -558,6 +746,17 @@ impl Query {
     }
 
     /// Rewinds file changes to a specific user message checkpoint.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    ///
+    /// # async fn demo(query: &Query) -> claude_code::Result<()> {
+    /// query.rewind_files("user-msg-1").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn rewind_files(&self, user_message_id: &str) -> Result<()> {
         self.send_control_request(
             json!({ "subtype": "rewind_files", "user_message_id": user_message_id }),
@@ -568,6 +767,17 @@ impl Query {
     }
 
     /// Closes the query session.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use claude_code::Query;
+    ///
+    /// # async fn demo(query: Query) -> claude_code::Result<()> {
+    /// query.close().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn close(mut self) -> Result<()> {
         self.shutdown().await
     }
@@ -968,6 +1178,38 @@ async fn handle_control_request(state: &QuerySharedState, request: Value) -> Res
 ///
 /// Implements JSON-RPC message routing for in-process SDK MCP servers.
 /// Handles `initialize`, `tools/list`, `tools/call`, and `notifications/initialized` methods.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use claude_code::{create_sdk_mcp_server, tool};
+/// use claude_code::query::handle_sdk_mcp_request;
+/// use serde_json::{json, Value};
+/// use std::collections::HashMap;
+/// use std::sync::Arc;
+///
+/// # async fn example() {
+///     let config = create_sdk_mcp_server(
+///     "tools",
+///     "1.0.0",
+///     vec![tool("echo", "Echo", json!({"type":"object"}), |_args: Value| async move {
+///         Ok(json!({"content": []}))
+///     })],
+///     );
+///
+///     let mut servers = HashMap::new();
+///     servers.insert(config.name.clone(), Arc::clone(&config.instance));
+///
+///     let response = handle_sdk_mcp_request(
+///     &servers,
+///     "tools",
+///     &json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}),
+///     )
+///     .await;
+///
+///     assert_eq!(response["jsonrpc"], "2.0");
+/// # }
+/// ```
 pub async fn handle_sdk_mcp_request(
     sdk_mcp_servers: &HashMap<String, Arc<McpSdkServer>>,
     server_name: &str,

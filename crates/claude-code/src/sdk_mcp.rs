@@ -62,10 +62,15 @@ pub type SdkMcpToolHandler =
 /// - `annotations` — Optional behavioral hints (read-only, destructive, etc.).
 #[derive(Clone)]
 pub struct SdkMcpTool {
+    /// Tool name exposed to Claude.
     pub name: String,
+    /// Human-readable tool description.
     pub description: String,
+    /// JSON Schema for the tool arguments.
     pub input_schema: Value,
+    /// Async handler invoked for tool calls.
     pub handler: SdkMcpToolHandler,
+    /// Optional behavior hints for the model/runtime.
     pub annotations: Option<ToolAnnotations>,
 }
 
@@ -76,6 +81,26 @@ impl SdkMcpTool {
     /// destructive, idempotent) to help with permission handling.
     ///
     /// Returns `self` for method chaining.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::{tool, ToolAnnotations};
+    /// use serde_json::{json, Value};
+    ///
+    /// let tool = tool(
+    ///     "read_status",
+    ///     "Reads status",
+    ///     json!({"type":"object"}),
+    ///     |_args: Value| async move { Ok(json!({"content": []})) },
+    /// )
+    /// .with_annotations(ToolAnnotations {
+    ///     read_only_hint: Some(true),
+    ///     ..Default::default()
+    /// });
+    ///
+    /// assert!(tool.annotations.is_some());
+    /// ```
     pub fn with_annotations(mut self, annotations: ToolAnnotations) -> Self {
         self.annotations = Some(annotations);
         self
@@ -139,6 +164,23 @@ pub struct McpSdkServer {
 
 impl McpSdkServer {
     /// Creates a new MCP server with the given name, version, and tools.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::{tool, McpSdkServer};
+    /// use serde_json::{json, Value};
+    ///
+    /// let tools = vec![tool(
+    ///     "ping",
+    ///     "Ping tool",
+    ///     json!({"type":"object"}),
+    ///     |_args: Value| async move { Ok(json!({"content": []})) },
+    /// )];
+    ///
+    /// let server = McpSdkServer::new("local-tools", "1.0.0", tools);
+    /// assert_eq!(server.name, "local-tools");
+    /// ```
     pub fn new(
         name: impl Into<String>,
         version: impl Into<String>,
@@ -156,11 +198,41 @@ impl McpSdkServer {
     }
 
     /// Returns `true` if the server has any registered tools.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::McpSdkServer;
+    ///
+    /// let server = McpSdkServer::new("empty", "1.0.0", vec![]);
+    /// assert!(!server.has_tools());
+    /// ```
     pub fn has_tools(&self) -> bool {
         !self.tool_map.is_empty()
     }
 
     /// Returns JSON representations of all registered tools (for `tools/list` responses).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::{tool, McpSdkServer};
+    /// use serde_json::{json, Value};
+    ///
+    /// let server = McpSdkServer::new(
+    ///     "demo",
+    ///     "1.0.0",
+    ///     vec![tool(
+    ///         "echo",
+    ///         "Echo text",
+    ///         json!({"type":"object","properties":{"text":{"type":"string"}}}),
+    ///         |_args: Value| async move { Ok(json!({"content": []})) },
+    ///     )],
+    /// );
+    ///
+    /// let tools = server.list_tools_json();
+    /// assert_eq!(tools.len(), 1);
+    /// ```
     pub fn list_tools_json(&self) -> Vec<Value> {
         self.tool_map
             .values()
@@ -187,6 +259,31 @@ impl McpSdkServer {
     ///
     /// If the tool is not found or the handler returns an error, an error result
     /// in MCP format is returned (with `isError: true`).
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use claude_code::{tool, McpSdkServer};
+    /// use serde_json::{json, Value};
+    ///
+    /// # async fn example() {
+    /// let server = McpSdkServer::new(
+    ///     "demo",
+    ///     "1.0.0",
+    ///     vec![tool(
+    ///         "echo",
+    ///         "Echo text",
+    ///         json!({"type":"object","properties":{"text":{"type":"string"}}}),
+    ///         |args: Value| async move {
+    ///             Ok(json!({"content":[{"type":"text","text":args["text"]}]}))
+    ///         },
+    ///     )],
+    /// );
+    ///
+    /// let result = server.call_tool_json("echo", json!({"text":"hello"})).await;
+    /// assert!(result.get("content").is_some());
+    /// # }
+    /// ```
     pub async fn call_tool_json(&self, tool_name: &str, arguments: Value) -> Value {
         let Some(tool) = self.tool_map.get(tool_name) else {
             return json!({

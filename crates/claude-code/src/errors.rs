@@ -14,11 +14,21 @@ use thiserror::Error;
 #[derive(Debug, Error, Clone)]
 #[error("{message}")]
 pub struct ClaudeSDKError {
+    /// Human-readable error message.
     pub message: String,
 }
 
 impl ClaudeSDKError {
     /// Creates a new `ClaudeSDKError` with the given message.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::ClaudeSDKError;
+    ///
+    /// let err = ClaudeSDKError::new("invalid configuration");
+    /// assert_eq!(err.to_string(), "invalid configuration");
+    /// ```
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -33,11 +43,21 @@ impl ClaudeSDKError {
 #[derive(Debug, Error, Clone)]
 #[error("{message}")]
 pub struct CLIConnectionError {
+    /// Human-readable connection error message.
     pub message: String,
 }
 
 impl CLIConnectionError {
     /// Creates a new `CLIConnectionError` with the given message.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::CLIConnectionError;
+    ///
+    /// let err = CLIConnectionError::new("connection dropped");
+    /// assert!(err.to_string().contains("connection dropped"));
+    /// ```
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -53,6 +73,7 @@ impl CLIConnectionError {
 #[derive(Debug, Error, Clone)]
 #[error("{message}")]
 pub struct CLINotFoundError {
+    /// Human-readable not-found message.
     pub message: String,
     /// The path that was searched, if a specific path was configured.
     pub cli_path: Option<String>,
@@ -60,6 +81,15 @@ pub struct CLINotFoundError {
 
 impl CLINotFoundError {
     /// Creates a new `CLINotFoundError` with the given message and optional path.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::CLINotFoundError;
+    ///
+    /// let err = CLINotFoundError::new("Claude Code not found", Some("/usr/local/bin/claude".to_string()));
+    /// assert!(err.to_string().contains("/usr/local/bin/claude"));
+    /// ```
     pub fn new(message: impl Into<String>, cli_path: Option<String>) -> Self {
         let base = message.into();
         let message = match &cli_path {
@@ -76,6 +106,7 @@ impl CLINotFoundError {
 #[derive(Debug, Error, Clone)]
 #[error("{message}")]
 pub struct ProcessError {
+    /// Human-readable process error message (may include code/stderr summary).
     pub message: String,
     /// The process exit code, if available.
     pub exit_code: Option<i32>,
@@ -85,6 +116,15 @@ pub struct ProcessError {
 
 impl ProcessError {
     /// Creates a new `ProcessError` with the given message, exit code, and stderr.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::ProcessError;
+    ///
+    /// let err = ProcessError::new("Command failed", Some(1), Some("permission denied".to_string()));
+    /// assert!(err.to_string().contains("exit code: 1"));
+    /// ```
     pub fn new(message: impl Into<String>, exit_code: Option<i32>, stderr: Option<String>) -> Self {
         let base = message.into();
         let mut message = base.clone();
@@ -120,6 +160,15 @@ pub struct CLIJSONDecodeError {
 
 impl CLIJSONDecodeError {
     /// Creates a new `CLIJSONDecodeError` with the raw line and error description.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::CLIJSONDecodeError;
+    ///
+    /// let err = CLIJSONDecodeError::new("{bad json}", "expected value");
+    /// assert!(err.preview.contains("{bad json}"));
+    /// ```
     pub fn new(line: impl Into<String>, original_error: impl Into<String>) -> Self {
         let line = line.into();
         let preview: String = line.chars().take(100).collect();
@@ -138,6 +187,7 @@ impl CLIJSONDecodeError {
 #[derive(Debug, Error, Clone)]
 #[error("{message}")]
 pub struct MessageParseError {
+    /// Human-readable parse failure message.
     pub message: String,
     /// The raw JSON data that failed to parse, if available.
     pub data: Option<Value>,
@@ -145,6 +195,15 @@ pub struct MessageParseError {
 
 impl MessageParseError {
     /// Creates a new `MessageParseError` with the given message and optional raw data.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::MessageParseError;
+    ///
+    /// let err = MessageParseError::new("missing field", None);
+    /// assert_eq!(err.to_string(), "missing field");
+    /// ```
     pub fn new(message: impl Into<String>, data: Option<Value>) -> Self {
         Self {
             message: message.into(),

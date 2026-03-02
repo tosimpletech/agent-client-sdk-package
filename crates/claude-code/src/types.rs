@@ -27,12 +27,16 @@ use crate::sdk_mcp::McpSdkServer;
 /// - `BypassPermissions` — Bypass all permission checks. **Use with caution.**
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PermissionMode {
+    /// Standard permission behavior with interactive approval when needed.
     #[serde(rename = "default")]
     Default,
+    /// Auto-accept file edits without interactive approval.
     #[serde(rename = "acceptEdits")]
     AcceptEdits,
+    /// Planning mode where the model proposes actions instead of executing them.
     #[serde(rename = "plan")]
     Plan,
+    /// Bypass all permission checks.
     #[serde(rename = "bypassPermissions")]
     BypassPermissions,
 }
@@ -60,8 +64,11 @@ pub enum PermissionMode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum SettingSource {
+    /// Load user-level settings from the home directory.
     User,
+    /// Load project-level shared settings.
     Project,
+    /// Load local project settings (typically not committed).
     Local,
 }
 
@@ -76,9 +83,12 @@ pub enum SettingSource {
 /// - `append` — Optional additional instructions to append to the preset system prompt.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SystemPromptPreset {
+    /// Discriminator field for preset prompts (typically `"preset"`).
     #[serde(rename = "type")]
     pub type_: String,
+    /// Preset name (typically `"claude_code"`).
     pub preset: String,
+    /// Extra instructions appended to the preset prompt.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub append: Option<String>,
 }
@@ -101,8 +111,10 @@ impl Default for SystemPromptPreset {
 /// - `preset` — Must be `"claude_code"` for the default tool set.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolsPreset {
+    /// Discriminator field for preset tools (typically `"preset"`).
     #[serde(rename = "type")]
     pub type_: String,
+    /// Preset name (typically `"claude_code"`).
     pub preset: String,
 }
 
@@ -126,7 +138,9 @@ impl Default for ToolsPreset {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum SystemPrompt {
+    /// Use a custom system prompt string.
     Text(String),
+    /// Use Claude Code's preset system prompt.
     Preset(SystemPromptPreset),
 }
 
@@ -141,7 +155,9 @@ pub enum SystemPrompt {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum ToolsOption {
+    /// Explicit list of allowed tool names.
     List(Vec<String>),
+    /// Use the default Claude Code tools preset.
     Preset(ToolsPreset),
 }
 
@@ -159,10 +175,14 @@ pub enum ToolsOption {
 ///   If omitted, uses the main model.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AgentDefinition {
+    /// Human-readable description of when this agent should be used.
     pub description: String,
+    /// The sub-agent system prompt.
     pub prompt: String,
+    /// Optional tool allowlist for this sub-agent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<String>>,
+    /// Optional model override for this sub-agent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 }
@@ -176,7 +196,9 @@ pub struct AgentDefinition {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionRuleValue {
+    /// Tool name that this rule applies to.
     pub tool_name: String,
+    /// Optional rule body (for example a path or glob).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rule_content: Option<String>,
 }
@@ -187,9 +209,13 @@ pub struct PermissionRuleValue {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum PermissionUpdateDestination {
+    /// Persist update to user settings.
     UserSettings,
+    /// Persist update to project settings.
     ProjectSettings,
+    /// Persist update to local project settings.
     LocalSettings,
+    /// Apply update only for the current session.
     Session,
 }
 
@@ -197,8 +223,11 @@ pub enum PermissionUpdateDestination {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum PermissionBehavior {
+    /// Explicitly allow matching operations.
     Allow,
+    /// Explicitly deny matching operations.
     Deny,
+    /// Ask for confirmation on matching operations.
     Ask,
 }
 
@@ -206,11 +235,17 @@ pub enum PermissionBehavior {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum PermissionUpdateType {
+    /// Add permission rules to the existing set.
     AddRules,
+    /// Replace all existing rules with the provided rules.
     ReplaceRules,
+    /// Remove matching rules from the existing set.
     RemoveRules,
+    /// Set the current permission mode.
     SetMode,
+    /// Add directories to the permission scope.
     AddDirectories,
+    /// Remove directories from the permission scope.
     RemoveDirectories,
 }
 
@@ -229,22 +264,50 @@ pub enum PermissionUpdateType {
 /// - `destination` — Where to apply the permission update.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PermissionUpdate {
+    /// Operation type to apply.
     #[serde(rename = "type")]
     pub type_: PermissionUpdateType,
+    /// Rule set used by rule-based updates.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rules: Option<Vec<PermissionRuleValue>>,
+    /// Behavior used by rule-based updates.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub behavior: Option<PermissionBehavior>,
+    /// Permission mode used by `SetMode`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<PermissionMode>,
+    /// Directory paths used by directory updates.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub directories: Option<Vec<String>>,
+    /// Where this update should be persisted/applied.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub destination: Option<PermissionUpdateDestination>,
 }
 
 impl PermissionUpdate {
     /// Converts this permission update to a JSON value suitable for the CLI protocol.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::{PermissionUpdate};
+    /// use claude_code::types::{PermissionBehavior, PermissionRuleValue, PermissionUpdateType};
+    ///
+    /// let update = PermissionUpdate {
+    ///     type_: PermissionUpdateType::AddRules,
+    ///     rules: Some(vec![PermissionRuleValue {
+    ///         tool_name: "Bash".to_string(),
+    ///         rule_content: Some("git status".to_string()),
+    ///     }]),
+    ///     behavior: Some(PermissionBehavior::Allow),
+    ///     mode: None,
+    ///     directories: None,
+    ///     destination: None,
+    /// };
+    ///
+    /// let json = update.to_cli_dict();
+    /// assert_eq!(json["type"], "addRules");
+    /// ```
     pub fn to_cli_dict(&self) -> Value {
         let mut result = serde_json::Map::new();
         result.insert(
@@ -316,10 +379,13 @@ impl PermissionUpdate {
 /// - `signal` — Reserved placeholder for future abort signal support.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ToolPermissionContext {
+    /// CLI-suggested permission updates for this tool request.
     #[serde(default)]
     pub suggestions: Vec<PermissionUpdate>,
+    /// Optional blocked path associated with the request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked_path: Option<String>,
+    /// Reserved signal placeholder for future API compatibility.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signal: Option<()>,
 }
@@ -334,7 +400,9 @@ pub struct ToolPermissionContext {
 /// - `updated_permissions` — Optional permission updates to apply alongside this approval.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PermissionResultAllow {
+    /// Optional rewritten tool input payload.
     pub updated_input: Option<Value>,
+    /// Optional additional permission updates to apply.
     pub updated_permissions: Option<Vec<PermissionUpdate>>,
 }
 
@@ -348,7 +416,9 @@ pub struct PermissionResultAllow {
 /// - `interrupt` — Whether to interrupt the current execution entirely.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PermissionResultDeny {
+    /// Human-readable denial reason.
     pub message: String,
+    /// Whether processing should be interrupted after denial.
     pub interrupt: bool,
 }
 
@@ -358,7 +428,9 @@ pub struct PermissionResultDeny {
 /// should be allowed or denied.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PermissionResult {
+    /// Approve the tool call with optional adjusted input/permissions.
     Allow(PermissionResultAllow),
+    /// Reject the tool call.
     Deny(PermissionResultDeny),
 }
 
@@ -437,8 +509,11 @@ pub type HookCallback = Arc<
 /// - `timeout` — Optional timeout in seconds for all hooks in this matcher (default: 60).
 #[derive(Clone, Default)]
 pub struct HookMatcher {
+    /// Optional matcher expression for selecting hook targets.
     pub matcher: Option<String>,
+    /// Hook callbacks to execute when this matcher is selected.
     pub hooks: Vec<HookCallback>,
+    /// Optional timeout in seconds applied to callbacks in this matcher.
     pub timeout: Option<f64>,
 }
 
@@ -454,11 +529,15 @@ pub struct HookMatcher {
 /// - `env` — Optional environment variables to set.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpStdioServerConfig {
+    /// Optional discriminator for stdio transport (`"stdio"`).
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub type_: Option<String>,
+    /// Command used to launch the MCP server process.
     pub command: String,
+    /// Optional command arguments.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub args: Option<Vec<String>>,
+    /// Optional environment variables passed to the process.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
 }
@@ -472,9 +551,12 @@ pub struct McpStdioServerConfig {
 /// - `headers` — Optional HTTP headers to include in requests.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpSSEServerConfig {
+    /// Discriminator for SSE transport (`"sse"`).
     #[serde(rename = "type")]
     pub type_: String,
+    /// SSE endpoint URL.
     pub url: String,
+    /// Optional HTTP headers for the SSE connection.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<HashMap<String, String>>,
 }
@@ -488,9 +570,12 @@ pub struct McpSSEServerConfig {
 /// - `headers` — Optional HTTP headers to include in requests.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpHttpServerConfig {
+    /// Discriminator for HTTP transport (`"http"`).
     #[serde(rename = "type")]
     pub type_: String,
+    /// HTTP endpoint URL.
     pub url: String,
+    /// Optional HTTP headers.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<HashMap<String, String>>,
 }
@@ -507,8 +592,11 @@ pub struct McpHttpServerConfig {
 /// - `instance` — Shared reference to the [`McpSdkServer`] instance.
 #[derive(Clone)]
 pub struct McpSdkServerConfig {
+    /// Discriminator for in-process SDK transport (`"sdk"`).
     pub type_: String,
+    /// Logical server name used in MCP config maps.
     pub name: String,
+    /// In-process server instance.
     pub instance: Arc<McpSdkServer>,
 }
 
@@ -522,9 +610,13 @@ pub struct McpSdkServerConfig {
 /// - `Sdk` — In-process server running within your application.
 #[derive(Clone)]
 pub enum McpServerConfig {
+    /// External stdio MCP server process.
     Stdio(McpStdioServerConfig),
+    /// Remote SSE MCP server.
     Sse(McpSSEServerConfig),
+    /// Remote HTTP MCP server.
     Http(McpHttpServerConfig),
+    /// In-process SDK MCP server.
     Sdk(McpSdkServerConfig),
 }
 
@@ -533,6 +625,21 @@ impl McpServerConfig {
     ///
     /// SDK-type servers are serialized as `{"type": "sdk", "name": "<name>"}` since
     /// the actual server instance runs in-process and doesn't need full serialization.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::{McpServerConfig, McpSSEServerConfig};
+    ///
+    /// let config = McpServerConfig::Sse(McpSSEServerConfig {
+    ///     type_: "sse".to_string(),
+    ///     url: "https://example.com/mcp".to_string(),
+    ///     headers: None,
+    /// });
+    ///
+    /// let json = config.to_cli_json();
+    /// assert_eq!(json["type"], "sse");
+    /// ```
     pub fn to_cli_json(&self) -> Value {
         match self {
             McpServerConfig::Stdio(config) => serde_json::to_value(config).unwrap_or(Value::Null),
@@ -558,8 +665,11 @@ impl McpServerConfig {
 #[derive(Clone, Default)]
 pub enum McpServersOption {
     #[default]
+    /// No MCP servers are configured.
     None,
+    /// Explicit map of server names to server configs.
     Servers(HashMap<String, McpServerConfig>),
+    /// Raw CLI `--mcp-config` payload (JSON string or path).
     Raw(String),
 }
 
@@ -573,8 +683,10 @@ pub enum McpServersOption {
 /// - `path` — Absolute or relative path to the plugin directory.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SdkPluginConfig {
+    /// Plugin type discriminator (currently `"local"`).
     #[serde(rename = "type")]
     pub type_: String,
+    /// Filesystem path to the plugin directory.
     pub path: String,
 }
 
@@ -591,17 +703,22 @@ pub struct SdkPluginConfig {
 /// - `socks_proxy_port` — SOCKS proxy port for network requests.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SandboxNetworkConfig {
+    /// Allowed unix socket paths.
     #[serde(rename = "allowUnixSockets", skip_serializing_if = "Option::is_none")]
     pub allow_unix_sockets: Option<Vec<String>>,
+    /// Whether all unix sockets are allowed.
     #[serde(
         rename = "allowAllUnixSockets",
         skip_serializing_if = "Option::is_none"
     )]
     pub allow_all_unix_sockets: Option<bool>,
+    /// Whether local port binding is allowed.
     #[serde(rename = "allowLocalBinding", skip_serializing_if = "Option::is_none")]
     pub allow_local_binding: Option<bool>,
+    /// HTTP proxy port exposed into the sandbox.
     #[serde(rename = "httpProxyPort", skip_serializing_if = "Option::is_none")]
     pub http_proxy_port: Option<u16>,
+    /// SOCKS proxy port exposed into the sandbox.
     #[serde(rename = "socksProxyPort", skip_serializing_if = "Option::is_none")]
     pub socks_proxy_port: Option<u16>,
 }
@@ -614,8 +731,10 @@ pub struct SandboxNetworkConfig {
 /// - `network` — Network patterns to ignore violations for.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SandboxIgnoreViolations {
+    /// File path patterns to ignore.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<Vec<String>>,
+    /// Network patterns to ignore.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub network: Option<Vec<String>>,
 }
@@ -636,24 +755,31 @@ pub struct SandboxIgnoreViolations {
 /// - `enable_weaker_nested_sandbox` — Enable a weaker nested sandbox for compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SandboxSettings {
+    /// Enables or disables sandboxing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    /// Auto-approve bash tool when sandboxing is enabled.
     #[serde(
         rename = "autoAllowBashIfSandboxed",
         skip_serializing_if = "Option::is_none"
     )]
     pub auto_allow_bash_if_sandboxed: Option<bool>,
+    /// Commands excluded from sandbox restrictions.
     #[serde(rename = "excludedCommands", skip_serializing_if = "Option::is_none")]
     pub excluded_commands: Option<Vec<String>>,
+    /// Whether unsandboxed command execution can be requested.
     #[serde(
         rename = "allowUnsandboxedCommands",
         skip_serializing_if = "Option::is_none"
     )]
     pub allow_unsandboxed_commands: Option<bool>,
+    /// Network-related sandbox settings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub network: Option<SandboxNetworkConfig>,
+    /// Violation categories to ignore.
     #[serde(rename = "ignoreViolations", skip_serializing_if = "Option::is_none")]
     pub ignore_violations: Option<SandboxIgnoreViolations>,
+    /// Enables weaker nested sandbox mode for compatibility.
     #[serde(
         rename = "enableWeakerNestedSandbox",
         skip_serializing_if = "Option::is_none"
@@ -664,6 +790,7 @@ pub struct SandboxSettings {
 /// A text content block in an assistant message.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TextBlock {
+    /// Textual content for this block.
     pub text: String,
 }
 
@@ -672,7 +799,9 @@ pub struct TextBlock {
 /// Contains the model's internal reasoning and a cryptographic signature.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ThinkingBlock {
+    /// Model-generated reasoning content.
     pub thinking: String,
+    /// Signature associated with the reasoning block.
     pub signature: String,
 }
 
@@ -687,8 +816,11 @@ pub struct ThinkingBlock {
 /// - `input` — JSON input parameters for the tool.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolUseBlock {
+    /// Tool use identifier.
     pub id: String,
+    /// Invoked tool name.
     pub name: String,
+    /// Tool input payload.
     pub input: Value,
 }
 
@@ -703,9 +835,12 @@ pub struct ToolUseBlock {
 /// - `is_error` — Whether the tool execution resulted in an error.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolResultBlock {
+    /// Corresponding tool use identifier.
     pub tool_use_id: String,
+    /// Optional tool result payload.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<Value>,
+    /// Whether this tool result represents an error.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_error: Option<bool>,
 }
@@ -715,9 +850,13 @@ pub struct ToolResultBlock {
 /// Content blocks make up the body of [`AssistantMessage`] and [`UserMessage`] responses.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ContentBlock {
+    /// Plain text content.
     Text(TextBlock),
+    /// Reasoning content.
     Thinking(ThinkingBlock),
+    /// Tool invocation request.
     ToolUse(ToolUseBlock),
+    /// Tool invocation result.
     ToolResult(ToolResultBlock),
 }
 
@@ -725,7 +864,9 @@ pub enum ContentBlock {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum UserContent {
+    /// Plain string user content.
     Text(String),
+    /// Structured content blocks.
     Blocks(Vec<ContentBlock>),
 }
 
@@ -739,9 +880,13 @@ pub enum UserContent {
 /// - `tool_use_result` — Tool result data if applicable.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UserMessage {
+    /// User message body.
     pub content: UserContent,
+    /// Optional message UUID.
     pub uuid: Option<String>,
+    /// Optional parent tool use identifier.
     pub parent_tool_use_id: Option<String>,
+    /// Optional embedded tool-use result payload.
     pub tool_use_result: Option<Value>,
 }
 
@@ -756,9 +901,13 @@ pub struct UserMessage {
 ///   (e.g., `"authentication_failed"`, `"rate_limit"`, `"server_error"`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AssistantMessage {
+    /// Assistant content blocks.
     pub content: Vec<ContentBlock>,
+    /// Model identifier used for generation.
     pub model: String,
+    /// Optional parent tool use identifier.
     pub parent_tool_use_id: Option<String>,
+    /// Optional error classification string.
     pub error: Option<String>,
 }
 
@@ -770,7 +919,9 @@ pub struct AssistantMessage {
 /// - `data` — The full raw data of the system message.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SystemMessage {
+    /// System message subtype.
     pub subtype: String,
+    /// Full raw system payload.
     pub data: Value,
 }
 
@@ -793,15 +944,25 @@ pub struct SystemMessage {
 /// - `structured_output` — Optional structured output if `output_format` was configured.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ResultMessage {
+    /// Result subtype.
     pub subtype: String,
+    /// End-to-end duration in milliseconds.
     pub duration_ms: i64,
+    /// API-only duration in milliseconds.
     pub duration_api_ms: i64,
+    /// Indicates whether execution ended in error.
     pub is_error: bool,
+    /// Number of turns performed.
     pub num_turns: i64,
+    /// Session identifier.
     pub session_id: String,
+    /// Optional total cost in USD.
     pub total_cost_usd: Option<f64>,
+    /// Optional usage summary payload.
     pub usage: Option<Value>,
+    /// Optional text result.
     pub result: Option<String>,
+    /// Optional structured output payload.
     pub structured_output: Option<Value>,
 }
 
@@ -817,16 +978,20 @@ pub struct ResultMessage {
 /// - `parent_tool_use_id` — Parent tool use ID if this event is from a subagent.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StreamEvent {
+    /// Event identifier.
     pub uuid: String,
+    /// Session identifier for this event.
     pub session_id: String,
+    /// Raw stream event payload.
     pub event: Value,
+    /// Optional parent tool use identifier.
     pub parent_tool_use_id: Option<String>,
 }
 
 /// Union type of all possible messages from the Claude Code CLI.
 ///
 /// When receiving messages via [`ClaudeSdkClient::receive_message()`](crate::ClaudeSdkClient::receive_message)
-/// or iterating results from [`query()`](crate::query), each message will be one of these variants.
+/// or iterating results from [`query()`](crate::query_fn::query), each message will be one of these variants.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Message {
     /// A user input message echoed back.
@@ -853,10 +1018,16 @@ pub enum Message {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum ThinkingConfig {
+    /// Let Claude pick thinking depth adaptively.
     #[serde(rename = "adaptive")]
     Adaptive,
+    /// Enable explicit thinking with a fixed token budget.
     #[serde(rename = "enabled")]
-    Enabled { budget_tokens: i64 },
+    Enabled {
+        /// Maximum reasoning token budget when thinking is enabled.
+        budget_tokens: i64,
+    },
+    /// Disable thinking blocks.
     #[serde(rename = "disabled")]
     Disabled,
 }
@@ -875,19 +1046,23 @@ pub enum ThinkingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolAnnotations {
+    /// Hint that the tool is read-only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub read_only_hint: Option<bool>,
+    /// Hint that the tool may be destructive.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub destructive_hint: Option<bool>,
+    /// Hint that repeated calls have same effect.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idempotent_hint: Option<bool>,
+    /// Hint that the tool interacts with external/open systems.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub open_world_hint: Option<bool>,
 }
 
 /// Main configuration for Claude Code queries and sessions.
 ///
-/// This is the primary configuration struct passed to [`query()`](crate::query) or
+/// This is the primary configuration struct passed to [`query()`](crate::query_fn::query) or
 /// [`ClaudeSdkClient::new()`](crate::ClaudeSdkClient::new). All fields are optional
 /// and have sensible defaults.
 ///

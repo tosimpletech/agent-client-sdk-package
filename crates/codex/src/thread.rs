@@ -104,11 +104,42 @@ impl Thread {
     }
 
     /// Returns the current thread id, if available.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use codex::Codex;
+    ///
+    /// let codex = Codex::new(None)?;
+    /// let thread = codex.start_thread(None);
+    /// let _id = thread.id();
+    /// # Ok::<(), codex::Error>(())
+    /// ```
     pub fn id(&self) -> Option<String> {
         self.id.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Provides input to the agent and streams events as they are produced.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use codex::{Codex, ThreadEvent};
+    /// use futures::StreamExt;
+    ///
+    /// # async fn example() -> codex::Result<()> {
+    /// let codex = Codex::new(None)?;
+    /// let thread = codex.start_thread(None);
+    /// let mut events = thread.run_streamed("Review this code", None).await?.events;
+    ///
+    /// while let Some(event) = events.next().await {
+    ///     if let ThreadEvent::TurnCompleted { usage } = event? {
+    ///         println!("{usage:?}");
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn run_streamed(
         &self,
         input: impl Into<Input>,
@@ -173,6 +204,20 @@ impl Thread {
     }
 
     /// Provides input to the agent and returns the completed turn.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use codex::Codex;
+    ///
+    /// # async fn example() -> codex::Result<()> {
+    /// let codex = Codex::new(None)?;
+    /// let thread = codex.start_thread(None);
+    /// let turn = thread.run("Summarize current repository state", None).await?;
+    /// println!("{}", turn.final_response);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn run(
         &self,
         input: impl Into<Input>,

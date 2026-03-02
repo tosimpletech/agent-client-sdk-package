@@ -16,6 +16,15 @@ impl Codex {
     ///
     /// When `options` is `None`, default options are used and the SDK attempts
     /// to discover the `codex` executable automatically.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use codex::Codex;
+    ///
+    /// let _codex = Codex::new(None)?;
+    /// # Ok::<(), codex::Error>(())
+    /// ```
     pub fn new(options: Option<CodexOptions>) -> Result<Self> {
         let options = options.unwrap_or_default();
         let exec = CodexExec::new(
@@ -27,6 +36,16 @@ impl Codex {
     }
 
     /// Starts a new thread.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use codex::Codex;
+    ///
+    /// let codex = Codex::new(None)?;
+    /// let _thread = codex.start_thread(None);
+    /// # Ok::<(), codex::Error>(())
+    /// ```
     pub fn start_thread(&self, options: Option<ThreadOptions>) -> Thread {
         Thread::new(
             self.exec.clone(),
@@ -37,6 +56,16 @@ impl Codex {
     }
 
     /// Resumes an existing thread by id.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use codex::Codex;
+    ///
+    /// let codex = Codex::new(None)?;
+    /// let _thread = codex.resume_thread("thread_123", None);
+    /// # Ok::<(), codex::Error>(())
+    /// ```
     pub fn resume_thread(&self, id: impl Into<String>, options: Option<ThreadOptions>) -> Thread {
         Thread::new(
             self.exec.clone(),

@@ -145,6 +145,16 @@ pub trait TransportFactory: Send + Sync {
 /// This is a convenience function for implementing [`Transport::into_split()`]
 /// when a transport doesn't have a natural way to split its I/O. All operations
 /// are serialized via a mutex.
+///
+/// # Example
+///
+/// ```rust
+/// use claude_code::transport::subprocess_cli::{Prompt, SubprocessCliTransport};
+/// use claude_code::transport::split_with_adapter;
+///
+/// let transport = SubprocessCliTransport::new(Prompt::Messages, Default::default()).unwrap();
+/// let (_reader, _writer, _close) = split_with_adapter(Box::new(transport)).unwrap();
+/// ```
 pub fn split_with_adapter(transport: Box<dyn Transport>) -> TransportSplitResult {
     let adapter = SplitAdapter::new(transport);
     Ok((
@@ -165,6 +175,16 @@ pub struct SplitAdapter {
 
 impl SplitAdapter {
     /// Creates a new `SplitAdapter` wrapping the given transport.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::transport::subprocess_cli::{Prompt, SubprocessCliTransport};
+    /// use claude_code::transport::SplitAdapter;
+    ///
+    /// let transport = SubprocessCliTransport::new(Prompt::Messages, Default::default()).unwrap();
+    /// let _adapter = SplitAdapter::new(Box::new(transport));
+    /// ```
     pub fn new(transport: Box<dyn Transport>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(transport)),
@@ -172,6 +192,17 @@ impl SplitAdapter {
     }
 
     /// Returns a reader half backed by the shared transport.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::transport::subprocess_cli::{Prompt, SubprocessCliTransport};
+    /// use claude_code::transport::SplitAdapter;
+    ///
+    /// let transport = SubprocessCliTransport::new(Prompt::Messages, Default::default()).unwrap();
+    /// let adapter = SplitAdapter::new(Box::new(transport));
+    /// let _reader = adapter.reader();
+    /// ```
     pub fn reader(&self) -> SplitAdapterReader {
         SplitAdapterReader {
             inner: self.inner.clone(),
@@ -179,6 +210,17 @@ impl SplitAdapter {
     }
 
     /// Returns a writer half backed by the shared transport.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use claude_code::transport::subprocess_cli::{Prompt, SubprocessCliTransport};
+    /// use claude_code::transport::SplitAdapter;
+    ///
+    /// let transport = SubprocessCliTransport::new(Prompt::Messages, Default::default()).unwrap();
+    /// let adapter = SplitAdapter::new(Box::new(transport));
+    /// let _writer = adapter.writer();
+    /// ```
     pub fn writer(&self) -> SplitAdapterWriter {
         SplitAdapterWriter {
             inner: self.inner.clone(),
