@@ -1,6 +1,6 @@
 [package]
 name = "codex-client-sdk"
-version = "0.1.0"
+version = "0.107.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Rust SDK for embedding the Codex agent via CLI-over-JSONL transport"
