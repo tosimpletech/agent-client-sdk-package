@@ -1,36 +1,26 @@
 # Unified Agent SDK
 
-[English](README.md)
-
-Unified Rust SDK providing a common abstraction layer for multiple AI coding agents (Claude Code, Codex, etc.).
+Unified Rust SDK that provides one interface for multiple coding agents (currently Codex and Claude Code).
 
 ## Table of Contents
 
 - [Overview](#overview)
-- [Status](#status)
 - [Installation](#installation)
-- [Core Concepts](#core-concepts)
-- [Architecture](#architecture)
-- [Design Principles](#design-principles)
-- [Development](#development)
-- [Contributing](#contributing)
+- [Quickstart](#quickstart)
+- [API Overview](#api-overview)
+- [Examples](#examples)
 - [License](#license)
 
 ## Overview
 
-This SDK provides a unified interface for interacting with different AI coding agents through common abstractions:
+`unified-agent-sdk` offers:
 
-- **Unified Executor Interface** - Single trait for all agents
-- **Profile System** - Configuration management with presets and overrides
-- **Log Normalization** - Standardized log format across agents
-- **Event System** - Unified events with hook support
-- **Session Management** - Session metadata
+- A shared executor interface (`AgentExecutor`) across providers
+- Provider adapters (`CodexExecutor`, `ClaudeCodeExecutor`)
+- Profile/config resolution (`ProfileManager`)
+- Unified event and log normalization pipeline (`AgentEvent`, `LogNormalizer`)
 
-## Status
-
-- Package version: `0.1.0` (`unified-agent-sdk`)
-- Scope: Framework complete, implementation in progress
-- Validation: Core traits and types defined, adapters pending
+It is designed to keep integration code stable while switching agent backends.
 
 ## Installation
 
@@ -44,125 +34,113 @@ unified-agent-sdk = { path = "../unified-agent-sdk" }
 Runtime prerequisites:
 
 - Rust 1.85+ (edition 2024)
-- Underlying agent CLIs (Codex, Claude Code) as needed
+- Installed agent CLIs (`codex` and/or `claude`)
 
-## Core Concepts
+## Quickstart
 
-### Executor
+```rust,no_run
+use unified_agent_sdk::{
+    AgentExecutor, CodexExecutor, PermissionPolicy, Result,
+    executor::SpawnConfig,
+};
 
-The `AgentExecutor` trait provides a unified interface:
-
-```rust
-use unified_agent_sdk::{AgentExecutor, SpawnConfig};
-use std::path::Path;
-
-async fn example(executor: &dyn AgentExecutor) {
+#[tokio::main]
+async fn main() -> Result<()> {
+    let executor = CodexExecutor::default();
     let config = SpawnConfig {
-        model: Some("gpt-4".into()),
+        model: Some("gpt-5-codex".to_string()),
+        reasoning: Some("medium".to_string()),
+        permission_policy: Some(PermissionPolicy::Prompt),
+        env: vec![],
+    };
+
+    let working_dir = std::env::current_dir()?;
+    let session = executor
+        .spawn(&working_dir, "Summarize this repository in 3 bullets.", &config)
+        .await?;
+
+    println!("session_id: {}", session.session_id);
+    Ok(())
+}
+```
+
+## API Overview
+
+- Executors
+  - `AgentExecutor` trait: `spawn`, `resume`, `capabilities`, `availability`
+  - Implementations: `CodexExecutor`, `ClaudeCodeExecutor`
+- Profiles
+  - `ProfileManager`, `ProfileId`, `ExecutorConfig`
+  - Runtime discovery via `discover`, merged config via `resolve`
+- Sessions and events
+  - `AgentSession` for session metadata and stream pipeline
+  - `AgentEvent`, `EventStream`, `HookManager`
+- Normalization
+  - `CodexLogNormalizer`, `ClaudeCodeLogNormalizer`
+  - `LogNormalizer` trait for custom adapters
+
+## Examples
+
+### Resume an existing session
+
+```rust,no_run
+use unified_agent_sdk::{
+    AgentExecutor, ClaudeCodeExecutor, Result,
+    executor::SpawnConfig,
+};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let executor = ClaudeCodeExecutor::new();
+    let config = SpawnConfig {
+        model: None,
         reasoning: None,
         permission_policy: None,
         env: vec![],
     };
 
-    let session = executor.spawn(
-        Path::new("/workspace"),
-        "Implement feature X",
-        &config,
-    ).await?;
+    let working_dir = std::env::current_dir()?;
+    let first = executor
+        .spawn(&working_dir, "Create a TODO list for this codebase.", &config)
+        .await?;
+
+    let resumed = executor
+        .resume(
+            &working_dir,
+            "Now prioritize the TODO list.",
+            &first.session_id,
+            None,
+            &config,
+        )
+        .await?;
+
+    println!("resumed session: {}", resumed.session_id);
+    Ok(())
 }
 ```
 
-### Profile System
+### Resolve profile + overrides
 
-Manage configurations with presets and runtime overrides:
-
-```rust
-use unified_agent_sdk::{ProfileManager, ExecutorConfig, ProfileId, ExecutorType};
-
-# async fn example() -> unified_agent_sdk::Result<()> {
-let manager = ProfileManager::new();
-let profile_id = ProfileId::new(ExecutorType::Codex, Some("PLAN".into()));
-
-let discovered = manager.discover(profile_id.executor).await;
-println!("models: {:?}", discovered.models);
-println!("reasoning levels: {:?}", discovered.reasoning_levels);
-
-let config = ExecutorConfig {
-    profile_id,
-    model_override: Some("gpt-4".into()),
-    reasoning_override: None,
-    permission_policy: None,
+```rust,no_run
+use unified_agent_sdk::{
+    ExecutorConfig, ExecutorType, PermissionPolicy, ProfileId, ProfileManager, Result,
 };
 
-let resolved = manager.resolve(&config).await?;
-# Ok(())
-# }
+#[tokio::main]
+async fn main() -> Result<()> {
+    let manager = ProfileManager::new();
+    let config = ExecutorConfig {
+        profile_id: ProfileId::new(ExecutorType::Codex, Some("plan".to_string())),
+        model_override: None,
+        reasoning_override: Some("low".to_string()),
+        permission_policy: Some(PermissionPolicy::Prompt),
+    };
+
+    let resolved = manager.resolve(&config).await?;
+    println!("model={:?}, reasoning={:?}", resolved.model, resolved.reasoning);
+    Ok(())
+}
 ```
-
-### Event System
-
-Subscribe to agent events with hooks:
-
-```rust
-use unified_agent_sdk::{HookManager, EventType, AgentEvent};
-use std::sync::Arc;
-
-let hooks = HookManager::new();
-hooks.register(EventType::ToolCallStarted, Arc::new(|event| {
-    Box::pin(async move {
-        println!("Tool called: {:?}", event);
-    })
-}));
-
-hooks.trigger(&event).await;
-```
-
-## Architecture
-
-```
-Application Layer
-       ↓
-Unified Agent SDK (this crate)
-  - AgentExecutor trait
-  - ProfileManager
-  - LogNormalizer
-  - EventStream + HookManager
-       ↓
-Adapters (to be implemented)
-  - CodexAdapter
-  - ClaudeCodeAdapter
-       ↓
-Base SDKs
-  - codex-sdk
-  - claude-code-sdk
-```
-
-## Design Principles
-
-- **Minimal Abstraction**: Only abstract what's necessary
-- **Pluggable**: Normalization is pluggable
-- **No Lifecycle Management**: SDK doesn't manage workspace or persistence
-- **Preserve Raw Data**: Original logs accessible through streams
-- **Type Safety**: Leverage Rust's type system
-
-## Development
-
-```bash
-cargo test -p unified-agent-sdk
-cargo clippy -p unified-agent-sdk --all-targets --all-features -- -D warnings
-```
-
-## Contributing
-
-Pull requests are welcome. Before submitting, run:
-
-```bash
-cargo fmt
-cargo clippy -p unified-agent-sdk --all-targets --all-features -- -D warnings
-cargo test -p unified-agent-sdk
-```
-
-See [ROADMAP.md](./ROADMAP.md) for implementation plan.
 
 ## License
 
