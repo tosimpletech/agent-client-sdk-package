@@ -19,6 +19,7 @@ pub use error::{ExecutorError, Result};
 pub use event::{AgentEvent, EventStream, EventType, HookManager};
 pub use executor::{AgentCapabilities, AgentExecutor, AvailabilityStatus};
 pub use log::{LogNormalizer, NormalizedLog};
+pub use normalizers::ClaudeCodeLogNormalizer;
 pub use normalizers::CodexLogNormalizer;
 pub use profile::{ExecutorConfig, ProfileId, ProfileManager};
 pub use session::{AgentSession, SessionMetadata, SessionResume};
