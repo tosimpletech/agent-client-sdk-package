@@ -1,10 +1,9 @@
-//! Log normalization and storage
+//! Log normalization
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{error::Result, types::{Role, ToolStatus}};
+use crate::types::{Role, ToolStatus};
 
 /// Normalized log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,22 +42,6 @@ pub enum ActionType {
     WebSearch { query: String },
     McpTool { tool: String },
     AskUser,
-}
-
-/// Log storage abstraction
-#[async_trait]
-pub trait LogStorage: Send + Sync {
-    /// Store raw log chunk
-    async fn store_raw(&self, session_id: &str, chunk: &[u8]) -> Result<()>;
-
-    /// Store normalized log
-    async fn store_normalized(&self, session_id: &str, log: &NormalizedLog) -> Result<()>;
-
-    /// Read raw logs
-    async fn read_raw(&self, session_id: &str) -> Result<Vec<u8>>;
-
-    /// Read normalized logs
-    async fn read_normalized(&self, session_id: &str) -> Result<Vec<NormalizedLog>>;
 }
 
 /// Log normalizer trait
