@@ -783,6 +783,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "claude-code-client-sdk",
+ "codex-client-sdk",
  "futures",
  "pin-project",
  "serde",

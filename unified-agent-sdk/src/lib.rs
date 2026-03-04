@@ -13,6 +13,7 @@ pub mod session;
 pub mod types;
 
 pub use adapters::ClaudeCodeExecutor;
+pub use adapters::CodexExecutor;
 pub use error::{ExecutorError, Result};
 pub use event::{AgentEvent, EventStream, EventType, HookManager};
 pub use executor::{AgentCapabilities, AgentExecutor, AvailabilityStatus};
