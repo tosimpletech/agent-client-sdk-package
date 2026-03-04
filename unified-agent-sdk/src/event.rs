@@ -4,11 +4,11 @@ use futures::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
-use std::future::Future;
 
-use crate::types::{Role, ExitStatus};
+use crate::types::{ExitStatus, Role};
 
 /// Agent event types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,7 +59,8 @@ impl AgentEvent {
 }
 
 /// Event hook callback
-pub type EventHook = Arc<dyn Fn(&AgentEvent) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+pub type EventHook =
+    Arc<dyn Fn(&AgentEvent) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 /// Hook manager
 pub struct HookManager {
@@ -119,4 +120,3 @@ impl Stream for EventStream {
         self.inner.as_mut().poll_next(cx)
     }
 }
-

@@ -15,3 +15,5 @@ serde_json = "1"
 thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 pin-project = "1"
+claude-code-client-sdk = { path = "../crates/claude-code" }
+which = { workspace = true }
