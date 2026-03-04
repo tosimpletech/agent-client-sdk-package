@@ -73,7 +73,9 @@ impl ClaudeCodeExecutor {
         };
 
         if let Some(mut old_client) = old_client {
-            old_client.disconnect().await.map_err(map_claude_error)?;
+            old_client.disconnect().await.map_err(|error| {
+                map_claude_error("failed to disconnect replaced claude session", error)
+            })?;
         }
 
         Ok(())
@@ -109,13 +111,20 @@ impl AgentExecutor for ClaudeCodeExecutor {
         let options = self.build_options(working_dir, config, None, false, false);
         let mut client = ClaudeSdkClient::new(Some(options), None);
 
-        client.connect(None).await.map_err(map_claude_error)?;
+        client
+            .connect(None)
+            .await
+            .map_err(|error| map_claude_error("failed to connect claude sdk client", error))?;
         client
             .query(InputPrompt::Text(prompt.to_owned()), DEFAULT_SESSION_ID)
             .await
-            .map_err(map_claude_error)?;
+            .map_err(|error| {
+                map_claude_error("failed to send prompt to claude sdk client", error)
+            })?;
 
-        let messages = client.receive_response().await.map_err(map_claude_error)?;
+        let messages = client.receive_response().await.map_err(|error| {
+            map_claude_error("failed to receive response from claude sdk client", error)
+        })?;
         let session_id =
             extract_session_id(&messages).unwrap_or_else(|| DEFAULT_SESSION_ID.to_string());
 
@@ -134,21 +143,30 @@ impl AgentExecutor for ClaudeCodeExecutor {
         let options = self.build_options(working_dir, config, Some(session_id), true, false);
         let mut client = ClaudeSdkClient::new(Some(options), None);
 
-        client.connect(None).await.map_err(map_claude_error)?;
+        client
+            .connect(None)
+            .await
+            .map_err(|error| map_claude_error("failed to connect claude sdk client", error))?;
 
         if let Some(reset_to) = reset_to {
-            client
-                .rewind_files(reset_to)
-                .await
-                .map_err(map_claude_error)?;
+            client.rewind_files(reset_to).await.map_err(|error| {
+                map_claude_error("failed to rewind claude session files", error)
+            })?;
         }
 
         client
             .query(InputPrompt::Text(prompt.to_owned()), session_id)
             .await
-            .map_err(map_claude_error)?;
+            .map_err(|error| {
+                map_claude_error("failed to send prompt to resumed claude session", error)
+            })?;
 
-        let messages = client.receive_response().await.map_err(map_claude_error)?;
+        let messages = client.receive_response().await.map_err(|error| {
+            map_claude_error(
+                "failed to receive response from resumed claude session",
+                error,
+            )
+        })?;
         let resumed_session_id =
             extract_session_id(&messages).unwrap_or_else(|| session_id.to_string());
 
@@ -197,17 +215,19 @@ fn extract_session_id(messages: &[Message]) -> Option<String> {
     })
 }
 
-fn map_claude_error(error: ClaudeError) -> ExecutorError {
+fn map_claude_error(context: &str, error: ClaudeError) -> ExecutorError {
     match error {
-        ClaudeError::CLINotFound(err) => ExecutorError::Unavailable(err.to_string()),
-        ClaudeError::CLIConnection(err) => ExecutorError::SpawnFailed(err.to_string()),
-        ClaudeError::Io(err) => ExecutorError::Io(err),
-        ClaudeError::Process(err) => ExecutorError::ExecutionFailed(err.to_string()),
-        ClaudeError::CLIJSONDecode(err) => ExecutorError::ExecutionFailed(err.to_string()),
-        ClaudeError::MessageParse(err) => ExecutorError::ExecutionFailed(err.to_string()),
+        ClaudeError::CLINotFound(err) => ExecutorError::unavailable(context, err),
+        ClaudeError::CLIConnection(err) => ExecutorError::spawn_failed(context, err),
+        ClaudeError::Io(err) => {
+            ExecutorError::Io(std::io::Error::new(err.kind(), format!("{context}: {err}")))
+        }
+        ClaudeError::Process(err) => ExecutorError::execution_failed(context, err),
+        ClaudeError::CLIJSONDecode(err) => ExecutorError::execution_failed(context, err),
+        ClaudeError::MessageParse(err) => ExecutorError::execution_failed(context, err),
         ClaudeError::Json(err) => ExecutorError::Serialization(err),
-        ClaudeError::ClaudeSDK(err) => ExecutorError::InvalidConfig(err.to_string()),
-        ClaudeError::Other(msg) => ExecutorError::Other(msg),
+        ClaudeError::ClaudeSDK(err) => ExecutorError::invalid_config(context, err),
+        ClaudeError::Other(msg) => ExecutorError::other(context, msg),
     }
 }
 

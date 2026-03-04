@@ -25,13 +25,14 @@ pub struct ClaudeCodeLogNormalizer {
 }
 
 impl ClaudeCodeLogNormalizer {
+    /// Creates a new stateful normalizer for Claude Code JSON stream chunks.
     pub fn new() -> Self {
         Self::default()
     }
 
     fn process_line(&mut self, line: &[u8]) -> Result<Vec<NormalizedLog>, ExecutorError> {
         let line = std::str::from_utf8(line).map_err(|err| {
-            ExecutorError::ExecutionFailed(format!("invalid UTF-8 in Claude Code log chunk: {err}"))
+            ExecutorError::execution_failed("failed to decode claude log chunk as UTF-8", err)
         })?;
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -54,8 +55,9 @@ impl ClaudeCodeLogNormalizer {
     }
 
     fn process_value(&mut self, value: Value) -> Result<Vec<NormalizedLog>, ExecutorError> {
-        let message =
-            parse_message(&value).map_err(|err| ExecutorError::ExecutionFailed(err.to_string()))?;
+        let message = parse_message(&value).map_err(|err| {
+            ExecutorError::execution_failed("failed to parse claude sdk message", err)
+        })?;
         let Some(message) = message else {
             return Ok(Vec::new());
         };
@@ -222,7 +224,10 @@ impl LogNormalizer for ClaudeCodeLogNormalizer {
                 self.json_buffer
             );
             self.json_buffer.clear();
-            logs.push(Self::error_to_log(ExecutorError::ExecutionFailed(message)));
+            logs.push(Self::error_to_log(ExecutorError::execution_failed(
+                "failed to flush claude code log stream",
+                message,
+            )));
         }
 
         logs
@@ -329,16 +334,7 @@ fn saturating_u64_to_u32(value: u64) -> u32 {
 }
 
 fn error_type(error: &ExecutorError) -> &'static str {
-    match error {
-        ExecutorError::Io(_) => "io",
-        ExecutorError::SpawnFailed(_) => "spawn_failed",
-        ExecutorError::ExecutionFailed(_) => "execution_failed",
-        ExecutorError::SessionNotFound(_) => "session_not_found",
-        ExecutorError::InvalidConfig(_) => "invalid_config",
-        ExecutorError::Unavailable(_) => "unavailable",
-        ExecutorError::Serialization(_) => "serialization",
-        ExecutorError::Other(_) => "other",
-    }
+    error.error_type()
 }
 
 #[cfg(test)]

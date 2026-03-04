@@ -35,7 +35,9 @@ impl CodexExecutor {
         }
         options.env = (!env.is_empty()).then_some(env);
 
-        Codex::new(Some(options)).map_err(|error| ExecutorError::SpawnFailed(error.to_string()))
+        Codex::new(Some(options)).map_err(|error| {
+            ExecutorError::spawn_failed("failed to initialize codex client", error)
+        })
     }
 
     fn build_thread_options(
@@ -61,8 +63,9 @@ impl CodexExecutor {
             .id()
             .or_else(|| fallback_session_id.map(ToOwned::to_owned))
             .ok_or_else(|| {
-                ExecutorError::ExecutionFailed(
-                    "codex did not return a thread id after running prompt".to_string(),
+                ExecutorError::execution_failed(
+                    "failed to resolve codex session id",
+                    "codex did not return a thread id after running prompt",
                 )
             })?;
 
@@ -90,10 +93,9 @@ impl AgentExecutor for CodexExecutor {
         let thread_options = self.build_thread_options(working_dir, config)?;
         let thread = codex.start_thread(Some(thread_options));
 
-        thread
-            .run(prompt, None)
-            .await
-            .map_err(|error| ExecutorError::ExecutionFailed(error.to_string()))?;
+        thread.run(prompt, None).await.map_err(|error| {
+            ExecutorError::execution_failed("failed to execute prompt in codex session", error)
+        })?;
 
         Self::wrap_thread(&thread, working_dir, None)
     }
@@ -107,8 +109,9 @@ impl AgentExecutor for CodexExecutor {
         config: &SpawnConfig,
     ) -> Result<AgentSession> {
         if reset_to.is_some() {
-            return Err(ExecutorError::InvalidConfig(
-                "codex adapter does not support reset_to".to_string(),
+            return Err(ExecutorError::invalid_config(
+                "failed to resume codex session",
+                "codex adapter does not support reset_to",
             ));
         }
 
@@ -116,10 +119,12 @@ impl AgentExecutor for CodexExecutor {
         let thread_options = self.build_thread_options(working_dir, config)?;
         let thread = codex.resume_thread(session_id, Some(thread_options));
 
-        thread
-            .run(prompt, None)
-            .await
-            .map_err(|error| ExecutorError::ExecutionFailed(error.to_string()))?;
+        thread.run(prompt, None).await.map_err(|error| {
+            ExecutorError::execution_failed(
+                format!("failed to execute prompt in resumed codex session '{session_id}'"),
+                error,
+            )
+        })?;
 
         Self::wrap_thread(&thread, working_dir, Some(session_id))
     }
@@ -160,9 +165,12 @@ fn parse_reasoning_effort(reasoning: Option<&str>) -> Result<Option<ModelReasoni
         "high" => ModelReasoningEffort::High,
         "xhigh" | "x-high" | "extra-high" | "extra_high" => ModelReasoningEffort::XHigh,
         _ => {
-            return Err(ExecutorError::InvalidConfig(format!(
-                "unsupported codex reasoning level '{reasoning}', expected one of: minimal, low, medium, high, xhigh"
-            )));
+            return Err(ExecutorError::invalid_config(
+                "failed to parse codex reasoning level",
+                format!(
+                    "unsupported value '{reasoning}', expected one of: minimal, low, medium, high, xhigh"
+                ),
+            ));
         }
     };
 

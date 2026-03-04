@@ -17,34 +17,92 @@ pub use converter::{EventConverter, normalized_log_to_event};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AgentEvent {
-    SessionStarted { session_id: String },
-    MessageReceived { role: Role, content: String },
-    ToolCallStarted { tool: String, args: Value },
-    ToolCallCompleted { tool: String, result: Value },
-    ToolCallFailed { tool: String, error: String },
+    /// Session lifecycle event emitted once when streaming starts.
+    SessionStarted {
+        /// Executor session identifier.
+        session_id: String,
+    },
+    /// Assistant/user/system message emitted from normalized logs.
+    MessageReceived {
+        /// Role that produced the message.
+        role: Role,
+        /// Message content.
+        content: String,
+    },
+    /// Tool call has started.
+    ToolCallStarted {
+        /// Tool name.
+        tool: String,
+        /// Tool arguments.
+        args: Value,
+    },
+    /// Tool call completed successfully.
+    ToolCallCompleted {
+        /// Tool name.
+        tool: String,
+        /// Tool result payload.
+        result: Value,
+    },
+    /// Tool call failed.
+    ToolCallFailed {
+        /// Tool name.
+        tool: String,
+        /// Error message returned by the tool.
+        error: String,
+    },
+    /// Thinking sequence started.
     ThinkingStarted,
-    ThinkingCompleted { content: String },
-    TokenUsageUpdated { total: u32, limit: u32 },
-    ErrorOccurred { error: String },
-    SessionCompleted { exit_status: ExitStatus },
+    /// Thinking sequence completed with final text.
+    ThinkingCompleted {
+        /// Thinking content captured from the source stream.
+        content: String,
+    },
+    /// Token usage update.
+    TokenUsageUpdated {
+        /// Total tokens consumed.
+        total: u32,
+        /// Token limit (if provided by source stream; can be `0` when unknown).
+        limit: u32,
+    },
+    /// Error event propagated through the session event stream.
+    ErrorOccurred {
+        /// Error message.
+        error: String,
+    },
+    /// Session lifecycle event emitted once at stream completion.
+    SessionCompleted {
+        /// Final exit status.
+        exit_status: ExitStatus,
+    },
 }
 
 /// Event type for filtering
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventType {
+    /// Filter for [`AgentEvent::SessionStarted`].
     SessionStarted,
+    /// Filter for [`AgentEvent::MessageReceived`].
     MessageReceived,
+    /// Filter for [`AgentEvent::ToolCallStarted`].
     ToolCallStarted,
+    /// Filter for [`AgentEvent::ToolCallCompleted`].
     ToolCallCompleted,
+    /// Filter for [`AgentEvent::ToolCallFailed`].
     ToolCallFailed,
+    /// Filter for [`AgentEvent::ThinkingStarted`].
     ThinkingStarted,
+    /// Filter for [`AgentEvent::ThinkingCompleted`].
     ThinkingCompleted,
+    /// Filter for [`AgentEvent::TokenUsageUpdated`].
     TokenUsageUpdated,
+    /// Filter for [`AgentEvent::ErrorOccurred`].
     ErrorOccurred,
+    /// Filter for [`AgentEvent::SessionCompleted`].
     SessionCompleted,
 }
 
 impl AgentEvent {
+    /// Returns the static [`EventType`] corresponding to this event value.
     pub fn event_type(&self) -> EventType {
         match self {
             AgentEvent::SessionStarted { .. } => EventType::SessionStarted,
@@ -71,17 +129,40 @@ pub struct HookManager {
 }
 
 impl HookManager {
+    /// Creates an empty hook manager.
     pub fn new() -> Self {
         Self {
             hooks: RwLock::new(HashMap::new()),
         }
     }
 
+    /// Registers a hook for a specific [`EventType`].
     pub fn register(&self, event_type: EventType, hook: EventHook) {
         let mut hooks = self.hooks.write().unwrap();
         hooks.entry(event_type).or_default().push(hook);
     }
 
+    /// Triggers all hooks registered for `event`'s type.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::sync::Arc;
+    /// use unified_agent_sdk::{AgentEvent, EventType, HookManager, Role};
+    ///
+    /// async fn run() {
+    ///     let hooks = HookManager::new();
+    ///     hooks.register(
+    ///         EventType::MessageReceived,
+    ///         Arc::new(|_event| Box::pin(async move {})),
+    ///     );
+    ///
+    ///     hooks.trigger(&AgentEvent::MessageReceived {
+    ///         role: Role::Assistant,
+    ///         content: "hello".to_string(),
+    ///     }).await;
+    /// }
+    /// ```
     pub async fn trigger(&self, event: &AgentEvent) {
         let hooks = {
             let hooks_map = self.hooks.read().unwrap();
@@ -108,6 +189,7 @@ pub struct EventStream {
 }
 
 impl EventStream {
+    /// Wraps any `Stream<Item = AgentEvent>` into the SDK event stream type.
     pub fn new(stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>) -> Self {
         Self { inner: stream }
     }
