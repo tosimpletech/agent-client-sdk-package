@@ -1,17 +1,21 @@
 //! Stateless conversion from normalized logs to agent events.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use crate::{event::AgentEvent, log::NormalizedLog, types::ToolStatus};
+use crate::{
+    event::AgentEvent,
+    log::{ActionType, NormalizedLog},
+    types::ToolStatus,
+};
 
 /// Converts normalized logs into SDK events.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct EventConverter;
 
 impl EventConverter {
-    /// Converts a single normalized log entry into an event.
+    /// Converts a single normalized log entry into one event.
     ///
-    /// Returns `None` when the log entry has no direct event mapping.
+    /// Returns `None` when the log entry has no direct one-to-one mapping.
     pub fn convert(log: NormalizedLog) -> Option<AgentEvent> {
         match log {
             NormalizedLog::Message { role, content } => {
@@ -47,6 +51,62 @@ pub fn normalized_log_to_event(log: NormalizedLog) -> Option<AgentEvent> {
     EventConverter::convert(log)
 }
 
+/// Convert one normalized log entry into one or more [`AgentEvent`] values.
+///
+/// This powers session-level pipelines where a single normalized record can fan out
+/// to multiple events (for example, thinking start/completed).
+pub fn from_normalized_log(log: NormalizedLog) -> Vec<AgentEvent> {
+    match log {
+        NormalizedLog::Message { role, content } => {
+            vec![AgentEvent::MessageReceived { role, content }]
+        }
+        NormalizedLog::ToolCall {
+            name,
+            args,
+            status,
+            action,
+        } => map_tool_call(name, args, status, action),
+        NormalizedLog::Thinking { content } => vec![
+            AgentEvent::ThinkingStarted,
+            AgentEvent::ThinkingCompleted { content },
+        ],
+        NormalizedLog::TokenUsage { total, limit } => {
+            vec![AgentEvent::TokenUsageUpdated { total, limit }]
+        }
+        NormalizedLog::Error {
+            error_type,
+            message,
+        } => vec![AgentEvent::ErrorOccurred {
+            error: format!("{error_type}: {message}"),
+        }],
+    }
+}
+
+fn map_tool_call(
+    name: String,
+    args: Value,
+    status: ToolStatus,
+    action: ActionType,
+) -> Vec<AgentEvent> {
+    match status {
+        ToolStatus::Started | ToolStatus::Running => {
+            vec![AgentEvent::ToolCallStarted { tool: name, args }]
+        }
+        ToolStatus::Completed => vec![AgentEvent::ToolCallCompleted {
+            tool: name,
+            result: json!({
+                "args": args,
+                "action": action,
+                "status": "completed",
+            }),
+        }],
+        ToolStatus::Failed => vec![AgentEvent::ToolCallFailed {
+            tool: name,
+            error: format_tool_error(args, action),
+        }],
+    }
+}
+
 fn extract_tool_error(args: &Value) -> String {
     args.get("error")
         .or_else(|| args.get("message"))
@@ -58,12 +118,20 @@ fn extract_tool_error(args: &Value) -> String {
         .unwrap_or_else(|| "tool call failed".to_string())
 }
 
+fn format_tool_error(args: Value, action: ActionType) -> String {
+    let serialized_args =
+        serde_json::to_string(&args).unwrap_or_else(|_| "<invalid-args>".to_string());
+    let serialized_action =
+        serde_json::to_string(&action).unwrap_or_else(|_| "<invalid-action>".to_string());
+    format!("tool call failed; args={serialized_args}; action={serialized_action}")
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
+    use super::*;
     use crate::{
-        event::{AgentEvent, EventConverter},
         log::{ActionType, NormalizedLog},
         types::{Role, ToolStatus},
     };
@@ -75,13 +143,10 @@ mod tests {
             content: "hello".to_string(),
         });
 
-        match event {
-            Some(AgentEvent::MessageReceived { role, content }) => {
-                assert_eq!(role, Role::Assistant);
-                assert_eq!(content, "hello");
-            }
-            other => panic!("unexpected event: {other:?}"),
-        }
+        assert!(matches!(
+            event,
+            Some(AgentEvent::MessageReceived { role: Role::Assistant, content }) if content == "hello"
+        ));
     }
 
     #[test]
@@ -111,63 +176,22 @@ mod tests {
             },
         });
 
-        match started {
-            Some(AgentEvent::ToolCallStarted { tool, args }) => {
-                assert_eq!(tool, "read_file");
-                assert_eq!(args, json!({ "path": "README.md" }));
-            }
-            other => panic!("unexpected started event: {other:?}"),
-        }
-
-        match completed {
-            Some(AgentEvent::ToolCallCompleted { tool, result }) => {
-                assert_eq!(tool, "read_file");
-                assert_eq!(result, json!({ "content": "ok" }));
-            }
-            other => panic!("unexpected completed event: {other:?}"),
-        }
-
-        match failed {
-            Some(AgentEvent::ToolCallFailed { tool, error }) => {
-                assert_eq!(tool, "read_file");
-                assert_eq!(error, "permission denied");
-            }
-            other => panic!("unexpected failed event: {other:?}"),
-        }
+        assert!(matches!(
+            started,
+            Some(AgentEvent::ToolCallStarted { tool, args }) if tool == "read_file" && args == json!({ "path": "README.md" })
+        ));
+        assert!(matches!(
+            completed,
+            Some(AgentEvent::ToolCallCompleted { tool, result }) if tool == "read_file" && result == json!({ "content": "ok" })
+        ));
+        assert!(matches!(
+            failed,
+            Some(AgentEvent::ToolCallFailed { tool, error }) if tool == "read_file" && error == "permission denied"
+        ));
     }
 
     #[test]
-    fn maps_thinking_to_thinking_completed() {
-        let event = EventConverter::convert(NormalizedLog::Thinking {
-            content: "analysis".to_string(),
-        });
-
-        match event {
-            Some(AgentEvent::ThinkingCompleted { content }) => {
-                assert_eq!(content, "analysis");
-            }
-            other => panic!("unexpected event: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn maps_token_usage_to_token_usage_updated() {
-        let event = EventConverter::convert(NormalizedLog::TokenUsage {
-            total: 12,
-            limit: 100,
-        });
-
-        match event {
-            Some(AgentEvent::TokenUsageUpdated { total, limit }) => {
-                assert_eq!(total, 12);
-                assert_eq!(limit, 100);
-            }
-            other => panic!("unexpected event: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn ignores_tool_call_running_state() {
+    fn ignores_tool_call_running_state_in_one_to_one_converter() {
         let event = EventConverter::convert(NormalizedLog::ToolCall {
             name: "read_file".to_string(),
             args: json!({ "path": "README.md" }),
@@ -178,5 +202,59 @@ mod tests {
         });
 
         assert!(event.is_none());
+    }
+
+    #[test]
+    fn converts_message_log_for_stream_pipeline() {
+        let events = from_normalized_log(NormalizedLog::Message {
+            role: Role::Assistant,
+            content: "done".to_string(),
+        });
+        assert!(matches!(
+            events.as_slice(),
+            [AgentEvent::MessageReceived { role: Role::Assistant, content }] if content == "done"
+        ));
+    }
+
+    #[test]
+    fn converts_tool_call_by_status_for_stream_pipeline() {
+        let started = from_normalized_log(NormalizedLog::ToolCall {
+            name: "bash".to_string(),
+            args: json!({"cmd":"ls"}),
+            status: ToolStatus::Started,
+            action: ActionType::CommandRun {
+                command: "ls".to_string(),
+            },
+        });
+        assert!(matches!(
+            started.as_slice(),
+            [AgentEvent::ToolCallStarted { tool, .. }] if tool == "bash"
+        ));
+
+        let completed = from_normalized_log(NormalizedLog::ToolCall {
+            name: "bash".to_string(),
+            args: json!({"cmd":"ls"}),
+            status: ToolStatus::Completed,
+            action: ActionType::CommandRun {
+                command: "ls".to_string(),
+            },
+        });
+        assert!(matches!(
+            completed.as_slice(),
+            [AgentEvent::ToolCallCompleted { tool, .. }] if tool == "bash"
+        ));
+
+        let failed = from_normalized_log(NormalizedLog::ToolCall {
+            name: "bash".to_string(),
+            args: json!({"cmd":"ls"}),
+            status: ToolStatus::Failed,
+            action: ActionType::CommandRun {
+                command: "ls".to_string(),
+            },
+        });
+        assert!(matches!(
+            failed.as_slice(),
+            [AgentEvent::ToolCallFailed { tool, .. }] if tool == "bash"
+        ));
     }
 }
