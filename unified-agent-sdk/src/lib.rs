@@ -23,6 +23,6 @@ pub use executor::{AgentCapabilities, AgentExecutor, AvailabilityStatus};
 pub use log::{LogNormalizer, NormalizedLog};
 pub use normalizers::ClaudeCodeLogNormalizer;
 pub use normalizers::CodexLogNormalizer;
-pub use profile::{ExecutorConfig, ProfileId, ProfileManager};
+pub use profile::{DiscoveryData, ExecutorConfig, ProfileId, ProfileManager};
 pub use session::{AgentSession, SessionMetadata, SessionResume};
 pub use types::*;
