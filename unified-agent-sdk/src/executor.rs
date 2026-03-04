@@ -3,11 +3,7 @@
 use async_trait::async_trait;
 use std::path::Path;
 
-use crate::{
-    error::Result,
-    session::AgentSession,
-    types::ExecutorType,
-};
+use crate::{error::Result, session::AgentSession, types::ExecutorType};
 
 /// Agent capabilities
 #[derive(Debug, Clone)]
