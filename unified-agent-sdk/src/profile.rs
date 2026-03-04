@@ -53,11 +53,14 @@ const CLAUDE_REASONING_DISCOVERY_COMMANDS: &[&[&str]] = &[
 /// Profile identifier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ProfileId {
+    /// Target executor backend.
     pub executor: ExecutorType,
+    /// Optional variant (for example `default`, `plan`, `fast`).
     pub variant: Option<String>,
 }
 
 impl ProfileId {
+    /// Creates a profile identifier.
     pub fn new(executor: ExecutorType, variant: Option<String>) -> Self {
         Self { executor, variant }
     }
@@ -66,24 +69,33 @@ impl ProfileId {
 /// Executor configuration with overrides
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutorConfig {
+    /// Profile key used to load base configuration.
     pub profile_id: ProfileId,
+    /// Runtime model override.
     pub model_override: Option<String>,
+    /// Runtime reasoning override.
     pub reasoning_override: Option<String>,
+    /// Runtime permission override.
     pub permission_policy: Option<PermissionPolicy>,
 }
 
 /// Resolved configuration
 #[derive(Debug, Clone)]
 pub struct ResolvedConfig {
+    /// Resolved model value.
     pub model: Option<String>,
+    /// Resolved reasoning value.
     pub reasoning: Option<String>,
+    /// Resolved permission policy.
     pub permission_policy: Option<PermissionPolicy>,
 }
 
 /// Dynamic discovery data for one executor.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DiscoveryData {
+    /// Models discovered from CLI/SDK probing.
     pub models: Vec<String>,
+    /// Reasoning levels discovered from CLI/SDK probing.
     pub reasoning_levels: Vec<String>,
 }
 
@@ -101,13 +113,17 @@ pub struct ProfileManager {
     discovery_ttl: Duration,
 }
 
+/// Profile values loaded from profile configuration files.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProfileData {
     #[serde(default)]
+    /// Optional default model.
     pub model: Option<String>,
     #[serde(default)]
+    /// Optional default reasoning level.
     pub reasoning: Option<String>,
     #[serde(default)]
+    /// Optional default permission policy.
     pub permission_policy: Option<PermissionPolicy>,
 }
 
@@ -134,10 +150,12 @@ struct RawProfileData {
 type RawProfilesFile = HashMap<String, HashMap<String, RawProfileData>>;
 
 impl ProfileManager {
+    /// Creates a profile manager using the default profile path.
     pub fn new() -> Self {
         Self::with_path(default_profile_path())
     }
 
+    /// Creates a profile manager bound to a specific profile JSON file path.
     pub fn with_path(path: impl Into<PathBuf>) -> Self {
         Self {
             config_path: path.into(),
@@ -147,6 +165,7 @@ impl ProfileManager {
         }
     }
 
+    /// Loads profile data by id, with automatic file-change reloading.
     pub async fn load(&self, id: &ProfileId) -> Result<ProfileData> {
         self.reload_if_needed(false).await?;
 
@@ -187,6 +206,29 @@ impl ProfileManager {
         data
     }
 
+    /// Resolves runtime configuration by merging:
+    /// profile defaults -> variant overrides -> runtime overrides -> discovered fallbacks.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use unified_agent_sdk::{ExecutorConfig, ExecutorType, ProfileId, ProfileManager};
+    ///
+    /// # async fn run() -> unified_agent_sdk::Result<()> {
+    /// let manager = ProfileManager::new();
+    /// let resolved = manager
+    ///     .resolve(&ExecutorConfig {
+    ///         profile_id: ProfileId::new(ExecutorType::Codex, Some("default".to_string())),
+    ///         model_override: None,
+    ///         reasoning_override: Some("high".to_string()),
+    ///         permission_policy: None,
+    ///     })
+    ///     .await?;
+    ///
+    /// let _model = resolved.model;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn resolve(&self, config: &ExecutorConfig) -> Result<ResolvedConfig> {
         let profile = self.load(&config.profile_id).await?;
         let should_discover_model = config.model_override.is_none() && profile.model.is_none();
@@ -289,10 +331,10 @@ fn load_profiles_from_disk(path: &Path) -> Result<ProfilesFile> {
     }
 
     let parsed: RawProfilesFile = serde_json::from_str(&raw).map_err(|err| {
-        ExecutorError::InvalidConfig(format!(
-            "failed to parse profile config at {}: {err}",
-            path.display()
-        ))
+        ExecutorError::invalid_config(
+            format!("failed to parse profile config at {}", path.display()),
+            err,
+        )
     })?;
 
     let mut profiles: ProfilesFile = HashMap::new();
@@ -303,10 +345,10 @@ fn load_profiles_from_disk(path: &Path) -> Result<ProfilesFile> {
         for (variant, data) in variants {
             let permission_policy = parse_permission_policy(data.permission_policy.as_deref())
                 .map_err(|err| {
-                    ExecutorError::InvalidConfig(format!(
-                        "invalid permission_policy for profile {}.{}: {err}",
-                        executor, variant
-                    ))
+                    ExecutorError::invalid_config(
+                        format!("invalid permission_policy for profile {executor}.{variant}"),
+                        err,
+                    )
                 })?;
 
             profile_map.insert(
@@ -334,9 +376,10 @@ fn parse_permission_policy(value: Option<&str>) -> Result<Option<PermissionPolic
         "prompt" => PermissionPolicy::Prompt,
         "deny" => PermissionPolicy::Deny,
         _ => {
-            return Err(ExecutorError::InvalidConfig(format!(
-                "unsupported permission_policy value: {raw}"
-            )));
+            return Err(ExecutorError::invalid_config(
+                "failed to parse permission_policy",
+                format!("unsupported value: {raw}"),
+            ));
         }
     };
 

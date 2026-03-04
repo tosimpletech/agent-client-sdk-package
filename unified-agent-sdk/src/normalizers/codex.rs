@@ -198,16 +198,7 @@ impl CodexLogNormalizer {
     }
 
     fn error_from_executor_error(error: ExecutorError) -> NormalizedLog {
-        let error_type = match error {
-            ExecutorError::Serialization(_) => "serialization",
-            ExecutorError::Io(_) => "io",
-            ExecutorError::SpawnFailed(_) => "spawn_failed",
-            ExecutorError::ExecutionFailed(_) => "execution_failed",
-            ExecutorError::SessionNotFound(_) => "session_not_found",
-            ExecutorError::InvalidConfig(_) => "invalid_config",
-            ExecutorError::Unavailable(_) => "unavailable",
-            ExecutorError::Other(_) => "other",
-        };
+        let error_type = error.error_type();
 
         NormalizedLog::Error {
             error_type: error_type.to_string(),
