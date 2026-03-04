@@ -20,24 +20,34 @@ pub type RawLogStream = Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>;
 /// Session metadata for persistence
 #[derive(Debug, Clone)]
 pub struct SessionMetadata {
+    /// Executor session identifier.
     pub session_id: String,
+    /// Executor backend type.
     pub executor_type: ExecutorType,
+    /// Metadata creation timestamp.
     pub created_at: DateTime<Utc>,
+    /// Last known source message id, if available.
     pub last_message_id: Option<String>,
+    /// Session working directory.
     pub working_dir: PathBuf,
 }
 
 /// Session resume information
 #[derive(Debug, Clone)]
 pub struct SessionResume {
+    /// Existing session identifier.
     pub session_id: String,
+    /// Optional message id used for rewind/reset semantics.
     pub reset_to_message: Option<String>,
 }
 
 /// Active agent session
 pub struct AgentSession {
+    /// Executor session identifier.
     pub session_id: String,
+    /// Executor backend type.
     pub executor_type: ExecutorType,
+    /// Working directory used by this session.
     pub working_dir: PathBuf,
     // Internal process handle (implementation-specific)
 }
@@ -47,6 +57,28 @@ impl AgentSession {
     /// raw logs -> normalized logs -> unified events.
     ///
     /// Hooks are triggered for each emitted event when provided.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use futures::stream;
+    /// use std::path::PathBuf;
+    /// use unified_agent_sdk::{AgentSession, CodexLogNormalizer, ExecutorType, session::RawLogStream};
+    ///
+    /// let session = AgentSession {
+    ///     session_id: "s1".to_string(),
+    ///     executor_type: ExecutorType::Codex,
+    ///     working_dir: PathBuf::from("."),
+    /// };
+    ///
+    /// let raw_logs: RawLogStream = Box::pin(stream::iter(vec![
+    ///     br#"{"type":"item.completed","item":{"type":"agent_message","id":"m1","text":"hello"}}"#
+    ///         .to_vec(),
+    ///     b"\n".to_vec(),
+    /// ]));
+    ///
+    /// let _events = session.event_stream(raw_logs, Box::new(CodexLogNormalizer::new()), None);
+    /// ```
     pub fn event_stream(
         &self,
         raw_logs: RawLogStream,
@@ -108,6 +140,7 @@ impl AgentSession {
         EventStream::new(Box::pin(stream))
     }
 
+    /// Returns immutable metadata snapshot for the session.
     pub fn metadata(&self) -> SessionMetadata {
         SessionMetadata {
             session_id: self.session_id.clone(),
@@ -118,6 +151,9 @@ impl AgentSession {
         }
     }
 
+    /// Waits for session completion and returns a summarized exit status.
+    ///
+    /// Current implementation is a placeholder that always reports success.
     pub async fn wait(&mut self) -> Result<ExitStatus> {
         // TODO: implement wait
         Ok(ExitStatus {
@@ -126,6 +162,9 @@ impl AgentSession {
         })
     }
 
+    /// Requests cancellation of the active session.
+    ///
+    /// Current implementation is a placeholder.
     pub async fn cancel(&mut self) -> Result<()> {
         // TODO: implement cancel
         Ok(())
