@@ -16,7 +16,9 @@ pub mod types;
 pub use adapters::ClaudeCodeExecutor;
 pub use adapters::CodexExecutor;
 pub use error::{ExecutorError, Result};
-pub use event::{AgentEvent, EventStream, EventType, HookManager};
+pub use event::{
+    AgentEvent, EventConverter, EventStream, EventType, HookManager, normalized_log_to_event,
+};
 pub use executor::{AgentCapabilities, AgentExecutor, AvailabilityStatus};
 pub use log::{LogNormalizer, NormalizedLog};
 pub use normalizers::ClaudeCodeLogNormalizer;

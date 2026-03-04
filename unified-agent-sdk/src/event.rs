@@ -10,6 +10,10 @@ use std::sync::{Arc, RwLock};
 
 use crate::types::{ExitStatus, Role};
 
+pub mod converter;
+
+pub use converter::{EventConverter, normalized_log_to_event};
+
 /// Agent event types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
