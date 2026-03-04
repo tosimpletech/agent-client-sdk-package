@@ -1,0 +1,17 @@
+[package]
+name = "unified-agent-sdk"
+version = "0.1.0"
+edition = "2021"
+authors = ["Vibe Kanban Contributors"]
+description = "Unified SDK for multiple AI coding agents"
+license = "Apache-2.0"
+
+[dependencies]
+async-trait = "0.1"
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+pin-project = "1"
