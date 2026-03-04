@@ -43,7 +43,7 @@ unified-agent-sdk = { path = "../unified-agent-sdk" }
 
 Runtime prerequisites:
 
-- Rust 1.85+ (edition 2021)
+- Rust 1.85+ (edition 2024)
 - Underlying agent CLIs (Codex, Claude Code) as needed
 
 ## Core Concepts
