@@ -1,16 +1,54 @@
 //! Profile and configuration management
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
-use std::time::SystemTime;
+use std::process::Stdio;
+use std::time::{Duration, Instant, SystemTime};
+use tokio::process::Command;
+use tokio::sync::RwLock;
+use tokio::time::timeout;
+
+use claude_code::{ClaudeAgentOptions, Prompt, SubprocessCliTransport};
+use codex::{Codex, ModelReasoningEffort};
 
 use crate::{
     error::{ExecutorError, Result},
     types::{ExecutorType, PermissionPolicy},
 };
+
+const DISCOVERY_TTL: Duration = Duration::from_secs(5 * 60);
+const DISCOVERY_COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
+
+const CODEX_MODEL_DISCOVERY_COMMANDS: &[&[&str]] = &[
+    &["models", "list", "--json"],
+    &["models", "--json"],
+    &["model", "list", "--json"],
+    &["models", "list"],
+];
+
+const CODEX_REASONING_DISCOVERY_COMMANDS: &[&[&str]] = &[
+    &["reasoning", "list", "--json"],
+    &["reasoning", "--json"],
+    &["models", "reasoning", "--json"],
+    &["reasoning", "list"],
+];
+
+const CLAUDE_MODEL_DISCOVERY_COMMANDS: &[&[&str]] = &[
+    &["models", "list", "--json"],
+    &["models", "--json"],
+    &["model", "list", "--json"],
+    &["models", "list"],
+];
+
+const CLAUDE_REASONING_DISCOVERY_COMMANDS: &[&[&str]] = &[
+    &["effort", "list", "--json"],
+    &["reasoning", "list", "--json"],
+    &["models", "reasoning", "--json"],
+    &["effort", "list"],
+];
 
 /// Profile identifier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -42,10 +80,25 @@ pub struct ResolvedConfig {
     pub permission_policy: Option<PermissionPolicy>,
 }
 
+/// Dynamic discovery data for one executor.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DiscoveryData {
+    pub models: Vec<String>,
+    pub reasoning_levels: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedDiscovery {
+    data: DiscoveryData,
+    expires_at: Instant,
+}
+
 /// Profile manager
 pub struct ProfileManager {
     config_path: PathBuf,
     cache: RwLock<ProfileCache>,
+    discovery_cache: RwLock<HashMap<ExecutorType, CachedDiscovery>>,
+    discovery_ttl: Duration,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -89,17 +142,15 @@ impl ProfileManager {
         Self {
             config_path: path.into(),
             cache: RwLock::new(ProfileCache::default()),
+            discovery_cache: RwLock::new(HashMap::new()),
+            discovery_ttl: DISCOVERY_TTL,
         }
     }
 
-    pub fn load(&self, id: &ProfileId) -> Result<ProfileData> {
-        self.reload_if_needed(false)?;
+    pub async fn load(&self, id: &ProfileId) -> Result<ProfileData> {
+        self.reload_if_needed(false).await?;
 
-        let mut cache = self
-            .cache
-            .write()
-            .map_err(|_| ExecutorError::Other("profile cache lock poisoned".to_string()))?;
-
+        let mut cache = self.cache.write().await;
         if let Some(data) = cache.resolved.get(id) {
             return Ok(data.clone());
         }
@@ -109,29 +160,80 @@ impl ProfileManager {
         Ok(data)
     }
 
-    pub fn resolve(&self, config: &ExecutorConfig) -> Result<ResolvedConfig> {
-        let profile = self.load(&config.profile_id)?;
+    /// Returns models and reasoning levels discovered from the underlying SDK/CLI.
+    ///
+    /// Discovery is cached with a 5-minute TTL to avoid frequent subprocess calls.
+    /// Any discovery error gracefully falls back to built-in defaults.
+    pub async fn discover(&self, executor: ExecutorType) -> DiscoveryData {
+        {
+            let cache = self.discovery_cache.read().await;
+            if let Some(entry) = cache.get(&executor)
+                && entry.expires_at > Instant::now()
+            {
+                return entry.data.clone();
+            }
+        }
+
+        let data = self.discover_fresh(executor).await;
+        let mut cache = self.discovery_cache.write().await;
+        cache.insert(
+            executor,
+            CachedDiscovery {
+                data: data.clone(),
+                expires_at: Instant::now() + self.discovery_ttl,
+            },
+        );
+
+        data
+    }
+
+    pub async fn resolve(&self, config: &ExecutorConfig) -> Result<ResolvedConfig> {
+        let profile = self.load(&config.profile_id).await?;
+        let should_discover_model = config.model_override.is_none() && profile.model.is_none();
+        let should_discover_reasoning =
+            config.reasoning_override.is_none() && profile.reasoning.is_none();
+
+        let discovery = if should_discover_model || should_discover_reasoning {
+            Some(self.discover(config.profile_id.executor).await)
+        } else {
+            None
+        };
+
+        let discovered_model = discovery
+            .as_ref()
+            .and_then(|data| preferred_model(&data.models));
+        let discovered_reasoning = discovery.as_ref().and_then(|data| {
+            if data.models.is_empty() {
+                None
+            } else {
+                preferred_reasoning_level(&data.reasoning_levels)
+            }
+        });
 
         Ok(ResolvedConfig {
-            model: config.model_override.clone().or(profile.model),
-            reasoning: config.reasoning_override.clone().or(profile.reasoning),
+            model: config
+                .model_override
+                .clone()
+                .or(profile.model)
+                .or(discovered_model),
+            reasoning: config
+                .reasoning_override
+                .clone()
+                .or(profile.reasoning)
+                .or(discovered_reasoning),
             permission_policy: config.permission_policy.or(profile.permission_policy),
         })
     }
 
     /// Force reload profiles from disk and clear resolved cache.
-    pub fn reload(&self) -> Result<()> {
-        self.reload_if_needed(true)
+    pub async fn reload(&self) -> Result<()> {
+        self.reload_if_needed(true).await
     }
 
-    fn reload_if_needed(&self, force: bool) -> Result<()> {
+    async fn reload_if_needed(&self, force: bool) -> Result<()> {
         let disk_mtime = read_modified_time(&self.config_path)?;
 
-        let mut cache = self
-            .cache
-            .write()
-            .map_err(|_| ExecutorError::Other("profile cache lock poisoned".to_string()))?;
-
+        let mut cache = self.cache.write().await;
         if !force && cache.loaded && cache.file_mtime == disk_mtime {
             return Ok(());
         }
@@ -141,6 +243,13 @@ impl ProfileManager {
         cache.file_mtime = disk_mtime;
         cache.loaded = true;
         Ok(())
+    }
+
+    async fn discover_fresh(&self, executor: ExecutorType) -> DiscoveryData {
+        match executor {
+            ExecutorType::Codex => discover_codex().await,
+            ExecutorType::ClaudeCode => discover_claude_code().await,
+        }
     }
 }
 
@@ -278,11 +387,363 @@ fn normalize_variant_key(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+async fn discover_codex() -> DiscoveryData {
+    let fallback = fallback_discovery(ExecutorType::Codex);
+    if Codex::new(None).is_err() {
+        return fallback;
+    }
+
+    let codex_program = which::which("codex")
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "codex".to_string());
+
+    let models = discover_from_commands(
+        &codex_program,
+        CODEX_MODEL_DISCOVERY_COMMANDS,
+        parse_models_output,
+    )
+    .await
+    .unwrap_or_default();
+
+    let reasoning_levels = discover_from_commands(
+        &codex_program,
+        CODEX_REASONING_DISCOVERY_COMMANDS,
+        parse_reasoning_output,
+    )
+    .await
+    .unwrap_or_else(codex_reasoning_levels);
+
+    DiscoveryData {
+        models,
+        reasoning_levels,
+    }
+}
+
+async fn discover_claude_code() -> DiscoveryData {
+    let fallback = fallback_discovery(ExecutorType::ClaudeCode);
+    let claude_program = match resolve_claude_cli_path() {
+        Some(path) => path,
+        None => return fallback,
+    };
+
+    let models = discover_from_commands(
+        &claude_program,
+        CLAUDE_MODEL_DISCOVERY_COMMANDS,
+        parse_models_output,
+    )
+    .await
+    .unwrap_or_default();
+
+    let reasoning_levels = discover_from_commands(
+        &claude_program,
+        CLAUDE_REASONING_DISCOVERY_COMMANDS,
+        parse_reasoning_output,
+    )
+    .await
+    .unwrap_or_else(claude_reasoning_levels);
+
+    DiscoveryData {
+        models,
+        reasoning_levels,
+    }
+}
+
+fn fallback_discovery(executor: ExecutorType) -> DiscoveryData {
+    match executor {
+        ExecutorType::Codex => DiscoveryData {
+            models: Vec::new(),
+            reasoning_levels: codex_reasoning_levels(),
+        },
+        ExecutorType::ClaudeCode => DiscoveryData {
+            models: Vec::new(),
+            reasoning_levels: claude_reasoning_levels(),
+        },
+    }
+}
+
+fn resolve_claude_cli_path() -> Option<String> {
+    SubprocessCliTransport::new(Prompt::Messages, ClaudeAgentOptions::default())
+        .ok()
+        .map(|transport| transport.cli_path.clone())
+}
+
+fn codex_reasoning_levels() -> Vec<String> {
+    [
+        ModelReasoningEffort::Minimal,
+        ModelReasoningEffort::Low,
+        ModelReasoningEffort::Medium,
+        ModelReasoningEffort::High,
+        ModelReasoningEffort::XHigh,
+    ]
+    .into_iter()
+    .map(model_reasoning_effort_to_string)
+    .collect()
+}
+
+fn model_reasoning_effort_to_string(level: ModelReasoningEffort) -> String {
+    let value = match level {
+        ModelReasoningEffort::Minimal => "minimal",
+        ModelReasoningEffort::Low => "low",
+        ModelReasoningEffort::Medium => "medium",
+        ModelReasoningEffort::High => "high",
+        ModelReasoningEffort::XHigh => "xhigh",
+    };
+    value.to_string()
+}
+
+fn claude_reasoning_levels() -> Vec<String> {
+    ["low", "medium", "high", "max"]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
+async fn discover_from_commands(
+    program: &str,
+    command_candidates: &[&[&str]],
+    parse_output: fn(&str) -> Vec<String>,
+) -> Option<Vec<String>> {
+    for args in command_candidates {
+        if let Some(output) = run_discovery_command(program, args).await {
+            let values = parse_output(&output);
+            if !values.is_empty() {
+                return Some(values);
+            }
+        }
+    }
+
+    None
+}
+
+async fn run_discovery_command(program: &str, args: &[&str]) -> Option<String> {
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb");
+
+    let output = timeout(DISCOVERY_COMMAND_TIMEOUT, command.output())
+        .await
+        .ok()?
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        return None;
+    }
+
+    Some(stdout)
+}
+
+fn parse_models_output(output: &str) -> Vec<String> {
+    let mut models = parse_json_list(
+        output,
+        &[
+            "models",
+            "data",
+            "items",
+            "available_models",
+            "availableModels",
+        ],
+        &["id", "name", "model", "slug"],
+    );
+
+    if models.is_empty() {
+        models = parse_plain_list(output);
+    }
+
+    dedupe_strings(models)
+        .into_iter()
+        .filter(|value| looks_like_model_name(value))
+        .collect()
+}
+
+fn parse_reasoning_output(output: &str) -> Vec<String> {
+    let mut values = parse_json_list(
+        output,
+        &[
+            "reasoning",
+            "reasoning_levels",
+            "reasoningLevels",
+            "effort",
+            "efforts",
+            "levels",
+        ],
+        &["reasoning", "effort", "level", "name", "id"],
+    );
+
+    if values.is_empty() {
+        values = parse_plain_list(output);
+    }
+
+    dedupe_strings(
+        values
+            .into_iter()
+            .filter_map(|value| normalize_reasoning_level(&value))
+            .collect(),
+    )
+}
+
+fn parse_json_list(output: &str, nested_keys: &[&str], field_keys: &[&str]) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<Value>(output) else {
+        return Vec::new();
+    };
+
+    let mut values = Vec::new();
+    collect_json_strings(&value, nested_keys, field_keys, &mut values);
+    values
+}
+
+fn collect_json_strings(
+    value: &Value,
+    nested_keys: &[&str],
+    field_keys: &[&str],
+    values: &mut Vec<String>,
+) {
+    match value {
+        Value::String(text) => {
+            values.push(text.to_string());
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_json_strings(item, nested_keys, field_keys, values);
+            }
+        }
+        Value::Object(map) => {
+            for key in field_keys {
+                if let Some(text) = map.get(*key).and_then(Value::as_str) {
+                    values.push(text.to_string());
+                }
+            }
+
+            let mut matched_nested = false;
+            for key in nested_keys {
+                if let Some(nested_value) = map.get(*key) {
+                    matched_nested = true;
+                    collect_json_strings(nested_value, nested_keys, field_keys, values);
+                }
+            }
+
+            if !matched_nested {
+                for nested_value in map.values() {
+                    if nested_value.is_array() || nested_value.is_object() {
+                        collect_json_strings(nested_value, nested_keys, field_keys, values);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_plain_list(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            if trimmed.chars().all(|ch| ch == '-' || ch == '=') {
+                return None;
+            }
+
+            let cleaned = trimmed
+                .trim_start_matches(['-', '*', '|'])
+                .split_whitespace()
+                .next()?
+                .trim_matches(['|', ',', ';']);
+
+            if cleaned.is_empty() {
+                return None;
+            }
+            Some(cleaned.to_string())
+        })
+        .collect()
+}
+
+fn dedupe_strings(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::new();
+
+    for value in values {
+        let normalized = value.trim().trim_matches(['"', '\'']).trim();
+        if normalized.is_empty() {
+            continue;
+        }
+
+        let key = normalized.to_ascii_lowercase();
+        if seen.insert(key) {
+            deduped.push(normalized.to_string());
+        }
+    }
+
+    deduped
+}
+
+fn looks_like_model_name(value: &str) -> bool {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        return false;
+    }
+
+    let lower = normalized.to_ascii_lowercase();
+    if matches!(lower.as_str(), "model" | "models" | "name" | "id") {
+        return false;
+    }
+
+    normalized.chars().any(|ch| ch.is_ascii_alphabetic())
+}
+
+fn normalize_reasoning_level(value: &str) -> Option<String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    let normalized = match normalized.as_str() {
+        "x-high" | "extra-high" | "extra_high" => "xhigh".to_string(),
+        _ => normalized,
+    };
+
+    if normalized.len() > 16 {
+        return None;
+    }
+    if !normalized
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch == '_' || ch == '-')
+    {
+        return None;
+    }
+
+    Some(normalized)
+}
+
+fn preferred_model(models: &[String]) -> Option<String> {
+    models.first().cloned()
+}
+
+fn preferred_reasoning_level(levels: &[String]) -> Option<String> {
+    for preferred in ["medium", "high", "low", "minimal", "max", "xhigh"] {
+        if let Some(level) = levels.iter().find(|level| level.as_str() == preferred) {
+            return Some(level.clone());
+        }
+    }
+    levels.first().cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
-    use std::thread;
     use std::time::{Duration, UNIX_EPOCH};
 
     struct TestConfigFile {
@@ -323,8 +784,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn load_merges_default_and_variant_profiles() {
+    #[tokio::test]
+    async fn load_merges_default_and_variant_profiles() {
         let fixture = TestConfigFile::new();
         fixture.write(
             r#"{
@@ -341,6 +802,7 @@ mod tests {
                 ExecutorType::Codex,
                 Some("plan".to_string()),
             ))
+            .await
             .expect("profile should load");
 
         assert_eq!(data.model.as_deref(), Some("gpt-4"));
@@ -348,8 +810,8 @@ mod tests {
         assert_eq!(data.permission_policy, Some(PermissionPolicy::Prompt));
     }
 
-    #[test]
-    fn resolve_applies_runtime_overrides() {
+    #[tokio::test]
+    async fn resolve_applies_runtime_overrides() {
         let fixture = TestConfigFile::new();
         fixture.write(
             r#"{
@@ -368,6 +830,7 @@ mod tests {
                 reasoning_override: None,
                 permission_policy: Some(PermissionPolicy::Deny),
             })
+            .await
             .expect("resolved config should be built");
 
         assert_eq!(resolved.model.as_deref(), Some("gpt-5"));
@@ -375,8 +838,8 @@ mod tests {
         assert_eq!(resolved.permission_policy, Some(PermissionPolicy::Deny));
     }
 
-    #[test]
-    fn load_auto_reloads_when_profile_file_changes() {
+    #[tokio::test]
+    async fn load_auto_reloads_when_profile_file_changes() {
         let fixture = TestConfigFile::new();
         fixture.write(
             r#"{
@@ -389,10 +852,10 @@ mod tests {
         let manager = ProfileManager::with_path(&fixture.path);
         let id = ProfileId::new(ExecutorType::Codex, None);
 
-        let first = manager.load(&id).expect("first load should succeed");
+        let first = manager.load(&id).await.expect("first load should succeed");
         assert_eq!(first.model.as_deref(), Some("gpt-4"));
 
-        thread::sleep(Duration::from_millis(1100));
+        tokio::time::sleep(Duration::from_millis(1100)).await;
         fixture.write(
             r#"{
   "codex": {
@@ -403,6 +866,7 @@ mod tests {
 
         let second = manager
             .load(&id)
+            .await
             .expect("reload after file update should work");
         assert_eq!(second.model.as_deref(), Some("gpt-5"));
     }

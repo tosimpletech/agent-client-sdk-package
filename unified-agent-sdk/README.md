@@ -79,15 +79,24 @@ Manage configurations with presets and runtime overrides:
 ```rust
 use unified_agent_sdk::{ProfileManager, ExecutorConfig, ProfileId, ExecutorType};
 
+# async fn example() -> unified_agent_sdk::Result<()> {
 let manager = ProfileManager::new();
+let profile_id = ProfileId::new(ExecutorType::Codex, Some("PLAN".into()));
+
+let discovered = manager.discover(profile_id.executor).await;
+println!("models: {:?}", discovered.models);
+println!("reasoning levels: {:?}", discovered.reasoning_levels);
+
 let config = ExecutorConfig {
-    profile_id: ProfileId::new(ExecutorType::Codex, Some("PLAN".into())),
+    profile_id,
     model_override: Some("gpt-4".into()),
     reasoning_override: None,
     permission_policy: None,
 };
 
-let resolved = manager.resolve(&config)?;
+let resolved = manager.resolve(&config).await?;
+# Ok(())
+# }
 ```
 
 ### Event System
