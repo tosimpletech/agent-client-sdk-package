@@ -24,7 +24,7 @@ This SDK provides a unified interface for interacting with different AI coding a
 - **Profile System** - Configuration management with presets and overrides
 - **Log Normalization** - Standardized log format across agents
 - **Event System** - Unified events with hook support
-- **Session Management** - Session metadata for persistence
+- **Session Management** - Session metadata
 
 ## Status
 
@@ -90,25 +90,6 @@ let config = ExecutorConfig {
 let resolved = manager.resolve(&config)?;
 ```
 
-### Log System
-
-Normalized logs with pluggable storage:
-
-```rust
-use unified_agent_sdk::{LogStorage, NormalizedLog};
-
-#[async_trait]
-impl LogStorage for MyStorage {
-    async fn store_raw(&self, session_id: &str, chunk: &[u8]) -> Result<()> {
-        // Store raw logs
-    }
-
-    async fn store_normalized(&self, session_id: &str, log: &NormalizedLog) -> Result<()> {
-        // Store normalized logs
-    }
-}
-```
-
 ### Event System
 
 Subscribe to agent events with hooks:
@@ -135,7 +116,7 @@ Application Layer
 Unified Agent SDK (this crate)
   - AgentExecutor trait
   - ProfileManager
-  - LogNormalizer + LogStorage
+  - LogNormalizer
   - EventStream + HookManager
        ↓
 Adapters (to be implemented)
@@ -150,9 +131,9 @@ Base SDKs
 ## Design Principles
 
 - **Minimal Abstraction**: Only abstract what's necessary
-- **Pluggable**: Storage and normalization are pluggable
+- **Pluggable**: Normalization is pluggable
 - **No Lifecycle Management**: SDK doesn't manage workspace or persistence
-- **Preserve Raw Data**: Original logs always accessible
+- **Preserve Raw Data**: Original logs accessible through streams
 - **Type Safety**: Leverage Rust's type system
 
 ## Development

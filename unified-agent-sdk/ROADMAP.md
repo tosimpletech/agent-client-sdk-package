@@ -25,7 +25,6 @@ Unified SDK for multiple AI coding agents (Claude Code, Codex, etc.) providing a
 ### 3. Log System (`log.rs`)
 - [x] `NormalizedLog` - unified log format
 - [x] `ActionType` - tool action classification
-- [x] `LogStorage` trait - pluggable storage abstraction
 - [x] `LogNormalizer` trait - log normalization
 
 **Status**: Framework complete, implementation pending
@@ -59,11 +58,10 @@ Unified SDK for multiple AI coding agents (Claude Code, Codex, etc.) providing a
 - [ ] Implement log-to-event conversion
 - [ ] Add integration tests
 
-### Phase 3: Storage & Advanced Features
-- [ ] Implement file-based `LogStorage`
-- [ ] Implement memory-based `LogStorage`
+### Phase 3: Advanced Features
 - [ ] Add profile discovery mechanism
 - [ ] Add capability detection
+- [ ] Performance optimization
 
 ### Phase 4: Polish & Documentation
 - [ ] Complete API documentation
@@ -79,7 +77,7 @@ Application Layer
 Unified Agent SDK (this crate)
   - AgentExecutor trait
   - ProfileManager
-  - LogNormalizer + LogStorage
+  - LogNormalizer
   - EventStream + HookManager
        ↓
 Adapters (to be implemented)
@@ -105,7 +103,7 @@ Base SDKs
 - Task orchestration
 - Session persistence (only provide metadata)
 - UI components
-- Database integration (provide trait only)
+- Log storage (application layer responsibility)
 
 ## Dependencies
 

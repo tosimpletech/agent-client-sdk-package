@@ -13,7 +13,7 @@ pub mod types;
 
 pub use executor::{AgentExecutor, AgentCapabilities, AvailabilityStatus};
 pub use profile::{ProfileId, ExecutorConfig, ProfileManager};
-pub use log::{NormalizedLog, LogStorage, LogNormalizer};
+pub use log::{NormalizedLog, LogNormalizer};
 pub use session::{AgentSession, SessionMetadata, SessionResume};
 pub use event::{AgentEvent, EventStream, HookManager, EventType};
 pub use error::{ExecutorError, Result};
