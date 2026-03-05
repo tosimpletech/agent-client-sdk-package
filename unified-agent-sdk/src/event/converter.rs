@@ -22,12 +22,15 @@ impl EventConverter {
                 Some(AgentEvent::MessageReceived { role, content })
             }
             NormalizedLog::ToolCall {
-                name, args, status, ..
+                name,
+                args,
+                status,
+                action,
             } => match status {
                 ToolStatus::Started => Some(AgentEvent::ToolCallStarted { tool: name, args }),
                 ToolStatus::Completed => Some(AgentEvent::ToolCallCompleted {
                     tool: name,
-                    result: args,
+                    result: completed_tool_result(args, action),
                 }),
                 ToolStatus::Failed => Some(AgentEvent::ToolCallFailed {
                     tool: name,
@@ -89,22 +92,25 @@ fn map_tool_call(
     action: ActionType,
 ) -> Vec<AgentEvent> {
     match status {
-        ToolStatus::Started | ToolStatus::Running => {
-            vec![AgentEvent::ToolCallStarted { tool: name, args }]
-        }
+        ToolStatus::Started => vec![AgentEvent::ToolCallStarted { tool: name, args }],
+        ToolStatus::Running => Vec::new(),
         ToolStatus::Completed => vec![AgentEvent::ToolCallCompleted {
             tool: name,
-            result: json!({
-                "args": args,
-                "action": action,
-                "status": "completed",
-            }),
+            result: completed_tool_result(args, action),
         }],
         ToolStatus::Failed => vec![AgentEvent::ToolCallFailed {
             tool: name,
             error: format_tool_error(args, action),
         }],
     }
+}
+
+fn completed_tool_result(args: Value, action: ActionType) -> Value {
+    json!({
+        "args": args,
+        "action": action,
+        "status": "completed",
+    })
 }
 
 fn extract_tool_error(args: &Value) -> String {
@@ -182,7 +188,16 @@ mod tests {
         ));
         assert!(matches!(
             completed,
-            Some(AgentEvent::ToolCallCompleted { tool, result }) if tool == "read_file" && result == json!({ "content": "ok" })
+            Some(AgentEvent::ToolCallCompleted { tool, result })
+                if tool == "read_file"
+                    && result == json!({
+                        "args": { "content": "ok" },
+                        "action": {
+                            "action": "FileRead",
+                            "path": "README.md"
+                        },
+                        "status": "completed"
+                    })
         ));
         assert!(matches!(
             failed,
@@ -256,5 +271,15 @@ mod tests {
             failed.as_slice(),
             [AgentEvent::ToolCallFailed { tool, .. }] if tool == "bash"
         ));
+
+        let running = from_normalized_log(NormalizedLog::ToolCall {
+            name: "bash".to_string(),
+            args: json!({"cmd":"ls"}),
+            status: ToolStatus::Running,
+            action: ActionType::CommandRun {
+                command: "ls".to_string(),
+            },
+        });
+        assert!(running.is_empty());
     }
 }

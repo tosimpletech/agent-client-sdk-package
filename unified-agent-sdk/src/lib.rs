@@ -25,4 +25,4 @@ pub use normalizers::ClaudeCodeLogNormalizer;
 pub use normalizers::CodexLogNormalizer;
 pub use profile::{DiscoveryData, ExecutorConfig, ProfileId, ProfileManager};
 pub use session::{AgentSession, SessionMetadata, SessionResume};
-pub use types::*;
+pub use types::{ExecutorType, ExitStatus, PermissionPolicy, Role, ToolStatus};

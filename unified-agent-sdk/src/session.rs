@@ -8,7 +8,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::{
-    error::Result,
+    error::{ExecutorError, Result},
     event::{AgentEvent, EventStream, HookManager, converter},
     log::LogNormalizer,
     types::{ExecutorType, ExitStatus},
@@ -49,6 +49,10 @@ pub struct AgentSession {
     pub executor_type: ExecutorType,
     /// Working directory used by this session.
     pub working_dir: PathBuf,
+    /// Session creation timestamp captured when the session is established.
+    pub created_at: DateTime<Utc>,
+    /// Last known source message id, if available.
+    pub last_message_id: Option<String>,
     // Internal process handle (implementation-specific)
 }
 
@@ -69,6 +73,8 @@ impl AgentSession {
     ///     session_id: "s1".to_string(),
     ///     executor_type: ExecutorType::Codex,
     ///     working_dir: PathBuf::from("."),
+    ///     created_at: chrono::Utc::now(),
+    ///     last_message_id: None,
     /// };
     ///
     /// let raw_logs: RawLogStream = Box::pin(stream::iter(vec![
@@ -82,7 +88,7 @@ impl AgentSession {
     pub fn event_stream(
         &self,
         raw_logs: RawLogStream,
-        normalizer: Box<dyn LogNormalizer + Send + Sync>,
+        normalizer: Box<dyn LogNormalizer + Send>,
         hooks: Option<Arc<HookManager>>,
     ) -> EventStream {
         let state = EventPipelineState {
@@ -145,36 +151,37 @@ impl AgentSession {
         SessionMetadata {
             session_id: self.session_id.clone(),
             executor_type: self.executor_type,
-            created_at: Utc::now(),
-            last_message_id: None,
+            created_at: self.created_at,
+            last_message_id: self.last_message_id.clone(),
             working_dir: self.working_dir.clone(),
         }
     }
 
     /// Waits for session completion and returns a summarized exit status.
     ///
-    /// Current implementation is a placeholder that always reports success.
+    /// Current implementation returns an explicit "not implemented" error.
     pub async fn wait(&mut self) -> Result<ExitStatus> {
-        // TODO: implement wait
-        Ok(ExitStatus {
-            code: Some(0),
-            success: true,
-        })
+        Err(ExecutorError::other(
+            "AgentSession::wait",
+            "not implemented",
+        ))
     }
 
     /// Requests cancellation of the active session.
     ///
-    /// Current implementation is a placeholder.
+    /// Current implementation returns an explicit "not implemented" error.
     pub async fn cancel(&mut self) -> Result<()> {
-        // TODO: implement cancel
-        Ok(())
+        Err(ExecutorError::other(
+            "AgentSession::cancel",
+            "not implemented",
+        ))
     }
 }
 
 struct EventPipelineState {
     session_id: String,
     raw_logs: RawLogStream,
-    normalizer: Box<dyn LogNormalizer + Send + Sync>,
+    normalizer: Box<dyn LogNormalizer + Send>,
     hooks: Option<Arc<HookManager>>,
     pending_events: VecDeque<AgentEvent>,
     emitted_started: bool,
@@ -259,6 +266,8 @@ mod tests {
             session_id: "session-1".to_string(),
             executor_type: ExecutorType::Codex,
             working_dir: PathBuf::from("."),
+            created_at: Utc::now(),
+            last_message_id: None,
         };
 
         let received_messages = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -321,6 +330,8 @@ mod tests {
             session_id: "session-2".to_string(),
             executor_type: ExecutorType::ClaudeCode,
             working_dir: PathBuf::from("."),
+            created_at: Utc::now(),
+            last_message_id: None,
         };
 
         let raw_logs: RawLogStream = Box::pin(stream::iter(vec![b"error".to_vec()]));

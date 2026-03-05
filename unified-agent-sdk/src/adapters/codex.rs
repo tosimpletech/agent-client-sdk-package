@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use async_trait::async_trait;
+use chrono::Utc;
 use codex::{ApprovalMode, Codex, CodexOptions, ModelReasoningEffort, Thread, ThreadOptions};
 
 use crate::{
@@ -73,6 +74,8 @@ impl CodexExecutor {
             session_id,
             executor_type: ExecutorType::Codex,
             working_dir: working_dir.to_path_buf(),
+            created_at: Utc::now(),
+            last_message_id: None,
         })
     }
 }

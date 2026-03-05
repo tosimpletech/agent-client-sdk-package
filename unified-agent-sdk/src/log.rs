@@ -6,8 +6,11 @@ use serde_json::Value;
 use crate::types::{Role, ToolStatus};
 
 /// Normalized log entry
+///
+/// This enum is intentionally non-exhaustive for forward compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[non_exhaustive]
 pub enum NormalizedLog {
     /// Message emitted by user/assistant/system.
     Message {
@@ -49,8 +52,11 @@ pub enum NormalizedLog {
 }
 
 /// Tool action type
+///
+/// This enum is intentionally non-exhaustive for forward compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action")]
+#[non_exhaustive]
 pub enum ActionType {
     /// File read operation.
     FileRead {
@@ -82,7 +88,7 @@ pub enum ActionType {
 }
 
 /// Log normalizer trait
-pub trait LogNormalizer: Send + Sync {
+pub trait LogNormalizer: Send {
     /// Process raw log chunk and return normalized logs
     fn normalize(&mut self, chunk: &[u8]) -> Vec<NormalizedLog>;
 

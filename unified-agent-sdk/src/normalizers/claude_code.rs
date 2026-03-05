@@ -166,11 +166,16 @@ impl ClaudeCodeLogNormalizer {
     }
 
     fn push_tool_result_log(&mut self, logs: &mut Vec<NormalizedLog>, result: ToolResultBlock) {
-        if let Some(pending) = self.pending_tools.remove(&result.tool_use_id) {
+        let ToolResultBlock {
+            tool_use_id,
+            content,
+            is_error,
+        } = result;
+        if let Some(pending) = self.pending_tools.remove(&tool_use_id) {
             logs.push(NormalizedLog::ToolCall {
                 name: pending.name,
-                args: pending.args,
-                status: if result.is_error.unwrap_or(false) {
+                args: content.unwrap_or(pending.args),
+                status: if is_error.unwrap_or(false) {
                     ToolStatus::Failed
                 } else {
                     ToolStatus::Completed
@@ -219,9 +224,9 @@ impl LogNormalizer for ClaudeCodeLogNormalizer {
         }
 
         if !self.json_buffer.trim().is_empty() {
+            let buffer_len = self.json_buffer.len();
             let message = format!(
-                "incomplete Claude Code JSON message buffered at flush: {}",
-                self.json_buffer
+                "incomplete Claude Code JSON message buffered at flush: <redacted> (buffer_len={buffer_len})"
             );
             self.json_buffer.clear();
             logs.push(Self::error_to_log(ExecutorError::execution_failed(
@@ -386,9 +391,10 @@ mod tests {
             &third[0],
             NormalizedLog::ToolCall {
                 name,
+                args,
                 status: ToolStatus::Completed,
                 ..
-            } if name == "Read"
+            } if name == "Read" && args == &serde_json::json!({"ok": true})
         ));
 
         let result = concat!(
