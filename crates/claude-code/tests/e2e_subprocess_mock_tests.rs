@@ -38,6 +38,17 @@ async fn test_dynamic_controls_with_subprocess_transport() {
         .rewind_files("msg-checkpoint-1")
         .await
         .expect("rewind_files");
+    let mcp_status = client.get_mcp_status().await.expect("get_mcp_status");
+    assert_eq!(mcp_status.mcp_servers.len(), 1);
+    client
+        .reconnect_mcp_server("mock-sdk")
+        .await
+        .expect("reconnect_mcp_server");
+    client
+        .toggle_mcp_server("mock-sdk", false)
+        .await
+        .expect("toggle_mcp_server");
+    client.stop_task("task-1").await.expect("stop_task");
 
     client
         .query(InputPrompt::Text("What is 2+2?".to_string()), "default")

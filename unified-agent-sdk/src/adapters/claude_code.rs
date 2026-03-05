@@ -355,6 +355,7 @@ mod tests {
             is_error,
             num_turns: 1,
             session_id: "session-1".to_string(),
+            stop_reason: None,
             total_cost_usd: None,
             usage: None,
             result: result.map(str::to_string),

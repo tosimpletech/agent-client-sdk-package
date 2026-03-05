@@ -211,6 +211,96 @@ async fn test_interrupt_sends_control_request() {
 }
 
 #[tokio::test]
+async fn test_mcp_and_task_control_requests() {
+    let transport = MockTransport::with_messages(vec![
+        json!({
+            "type": "control_response",
+            "response": {"subtype": "success", "request_id": "req_1", "response": {}}
+        }),
+        json!({
+            "type": "control_response",
+            "response": {"subtype": "success", "request_id": "req_2", "response": {}}
+        }),
+        json!({
+            "type": "control_response",
+            "response": {"subtype": "success", "request_id": "req_3", "response": {}}
+        }),
+        json!({
+            "type": "control_response",
+            "response": {"subtype": "success", "request_id": "req_4", "response": {}}
+        }),
+    ]);
+    let state = transport.state.clone();
+
+    let mut client = ClaudeSdkClient::new_with_transport(None, Box::new(transport));
+    client.connect(None).await.expect("connect");
+    client
+        .reconnect_mcp_server("mock-server")
+        .await
+        .expect("reconnect_mcp_server");
+    client
+        .toggle_mcp_server("mock-server", false)
+        .await
+        .expect("toggle_mcp_server");
+    client.stop_task("task-1").await.expect("stop_task");
+
+    let state = state.lock().await;
+    assert!(
+        state
+            .written_messages
+            .iter()
+            .any(|msg| msg.contains("\"subtype\":\"mcp_reconnect\"")
+                && msg.contains("\"serverName\":\"mock-server\""))
+    );
+    assert!(
+        state
+            .written_messages
+            .iter()
+            .any(|msg| msg.contains("\"subtype\":\"mcp_toggle\"")
+                && msg.contains("\"enabled\":false"))
+    );
+    assert!(
+        state
+            .written_messages
+            .iter()
+            .any(|msg| msg.contains("\"subtype\":\"stop_task\"")
+                && msg.contains("\"task_id\":\"task-1\""))
+    );
+}
+
+#[tokio::test]
+async fn test_get_mcp_status_returns_typed_payload() {
+    let transport = MockTransport::with_messages(vec![
+        json!({
+            "type": "control_response",
+            "response": {"subtype": "success", "request_id": "req_1", "response": {}}
+        }),
+        json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": "req_2",
+                "response": {
+                    "mcpServers": [{
+                        "name": "mock-server",
+                        "status": "connected",
+                        "serverInfo": {"name": "mock", "version": "1.0.0"},
+                        "scope": "project",
+                        "tools": [{"name": "echo"}]
+                    }]
+                }
+            }
+        }),
+    ]);
+
+    let mut client = ClaudeSdkClient::new_with_transport(None, Box::new(transport));
+    client.connect(None).await.expect("connect");
+    let status = client.get_mcp_status().await.expect("get_mcp_status");
+    assert_eq!(status.mcp_servers.len(), 1);
+    assert_eq!(status.mcp_servers[0].name, "mock-server");
+}
+
+#[tokio::test]
 async fn test_errors_when_not_connected() {
     let client = ClaudeSdkClient::new(None, None);
     let err = client

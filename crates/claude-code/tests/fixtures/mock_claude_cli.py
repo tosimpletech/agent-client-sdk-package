@@ -473,12 +473,37 @@ def main():
                         )
                 continue
 
+            if subtype == "mcp_status":
+                emit(
+                    {
+                        "type": "control_response",
+                        "response": {
+                            "subtype": "success",
+                            "request_id": req_id,
+                            "response": {
+                                "mcpServers": [
+                                    {
+                                        "name": "mock-sdk",
+                                        "status": "connected",
+                                        "serverInfo": {"name": "mock-sdk", "version": "1.0.0"},
+                                        "scope": "project",
+                                        "tools": [{"name": "echo"}],
+                                    }
+                                ]
+                            },
+                        },
+                    }
+                )
+                continue
+
             if subtype in {
                 "interrupt",
                 "set_permission_mode",
                 "set_model",
                 "rewind_files",
-                "mcp_status",
+                "mcp_reconnect",
+                "mcp_toggle",
+                "stop_task",
             }:
                 emit(
                     {

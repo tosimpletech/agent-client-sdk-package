@@ -78,6 +78,7 @@ pub mod message_parser;
 pub mod query;
 pub mod query_fn;
 pub mod sdk_mcp;
+pub mod sessions;
 pub mod transport;
 pub mod types;
 
@@ -90,6 +91,7 @@ pub use message_parser::parse_message;
 pub use query::{Query, handle_sdk_mcp_request};
 pub use query_fn::{query, query_from_stream, query_stream, query_stream_from_stream};
 pub use sdk_mcp::{McpSdkServer, SdkMcpTool, create_sdk_mcp_server, tool};
+pub use sessions::{get_session_messages, list_sessions};
 pub use transport::subprocess_cli::{
     DEFAULT_MAX_BUFFER_SIZE, JsonStreamBuffer, Prompt, SubprocessCliTransport,
 };
@@ -100,11 +102,14 @@ pub use transport::{
 pub use types::{
     AgentDefinition, AssistantMessage, ClaudeAgentOptions, ContentBlock, HookCallback, HookContext,
     HookInput, HookJSONOutput, HookMatcher, McpHttpServerConfig, McpSSEServerConfig,
-    McpSdkServerConfig, McpServerConfig, McpServersOption, McpStdioServerConfig, Message,
-    PermissionMode, PermissionResult, PermissionResultAllow, PermissionResultDeny,
-    PermissionUpdate, ResultMessage, SandboxIgnoreViolations, SandboxNetworkConfig,
-    SandboxSettings, SdkPluginConfig, SettingSource, StderrCallback, StreamEvent, SystemMessage,
-    SystemPrompt, SystemPromptPreset, TextBlock, ThinkingBlock, ThinkingConfig, ToolAnnotations,
+    McpSdkServerConfig, McpServerConfig, McpServerConnectionStatus, McpServerInfo, McpServerStatus,
+    McpServerStatusConfig, McpServersOption, McpStatusResponse, McpStdioServerConfig,
+    McpToolAnnotations, McpToolInfo, Message, PermissionMode, PermissionResult,
+    PermissionResultAllow, PermissionResultDeny, PermissionUpdate, ResultMessage, SDKSessionInfo,
+    SandboxIgnoreViolations, SandboxNetworkConfig, SandboxSettings, SdkPluginConfig,
+    SessionMessage, SettingSource, StderrCallback, StreamEvent, SystemMessage, SystemPrompt,
+    SystemPromptPreset, TaskNotificationMessage, TaskNotificationStatus, TaskProgressMessage,
+    TaskStartedMessage, TaskUsage, TextBlock, ThinkingBlock, ThinkingConfig, ToolAnnotations,
     ToolPermissionContext, ToolResultBlock, ToolUseBlock, ToolsOption, ToolsPreset, UserContent,
     UserMessage,
 };
