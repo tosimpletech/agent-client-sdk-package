@@ -117,14 +117,30 @@ fn completed_tool_result(args: Value, action: ActionType) -> Value {
 }
 
 fn extract_tool_error(args: &Value) -> String {
+    if let Value::String(message) = args {
+        let trimmed = message.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
     args.get("error")
         .or_else(|| args.get("message"))
-        .map(|value| match value {
-            Value::String(message) => message.clone(),
-            other => other.to_string(),
-        })
-        .filter(|message| !message.is_empty() && message != "null")
+        .and_then(nonempty_message)
         .unwrap_or_else(|| "tool call failed".to_string())
+}
+
+fn nonempty_message(value: &Value) -> Option<String> {
+    let message = match value {
+        Value::String(message) => message.clone(),
+        Value::Null => return None,
+        other => other.to_string(),
+    };
+    let trimmed = message.trim();
+    if trimmed.is_empty() || trimmed == "null" {
+        return None;
+    }
+    Some(trimmed.to_string())
 }
 
 #[cfg(test)]
@@ -197,6 +213,35 @@ mod tests {
         assert!(matches!(
             failed,
             Some(AgentEvent::ToolCallFailed { tool, error }) if tool == "read_file" && error == "permission denied"
+        ));
+    }
+
+    #[test]
+    fn preserves_string_payloads_for_failed_tool_calls() {
+        let one_to_one = EventConverter::convert(NormalizedLog::ToolCall {
+            name: "bash".to_string(),
+            args: json!("permission denied"),
+            status: ToolStatus::Failed,
+            action: ActionType::CommandRun {
+                command: "ls".to_string(),
+            },
+        });
+        let fan_out = from_normalized_log(NormalizedLog::ToolCall {
+            name: "bash".to_string(),
+            args: json!("permission denied"),
+            status: ToolStatus::Failed,
+            action: ActionType::CommandRun {
+                command: "ls".to_string(),
+            },
+        });
+
+        assert!(matches!(
+            one_to_one,
+            Some(AgentEvent::ToolCallFailed { tool, error }) if tool == "bash" && error == "permission denied"
+        ));
+        assert!(matches!(
+            fan_out.as_slice(),
+            [AgentEvent::ToolCallFailed { tool, error }] if tool == "bash" && error == "permission denied"
         ));
     }
 
