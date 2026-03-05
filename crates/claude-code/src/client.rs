@@ -20,7 +20,9 @@ use crate::query::{Query, build_hooks_config};
 use crate::sdk_mcp::McpSdkServer;
 use crate::transport::subprocess_cli::{Prompt as TransportPrompt, SubprocessCliTransport};
 use crate::transport::{Transport, TransportFactory};
-use crate::types::{ClaudeAgentOptions, McpServerConfig, McpServersOption, Message};
+use crate::types::{
+    ClaudeAgentOptions, McpServerConfig, McpServersOption, McpStatusResponse, Message,
+};
 
 /// Input prompt for a query — either plain text or structured messages.
 ///
@@ -680,13 +682,55 @@ impl ClaudeSdkClient {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn get_mcp_status(&self) -> Result<Value> {
+    pub async fn get_mcp_status(&self) -> Result<McpStatusResponse> {
         let query = self.query.as_ref().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
                 "Not connected. Call connect() first.",
             ))
         })?;
         query.get_mcp_status().await
+    }
+
+    /// Reconnects a disconnected or failed MCP server.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CLIConnectionError`] if not connected.
+    pub async fn reconnect_mcp_server(&self, server_name: &str) -> Result<()> {
+        let query = self.query.as_ref().ok_or_else(|| {
+            Error::CLIConnection(CLIConnectionError::new(
+                "Not connected. Call connect() first.",
+            ))
+        })?;
+        query.reconnect_mcp_server(server_name).await
+    }
+
+    /// Enables or disables an MCP server.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CLIConnectionError`] if not connected.
+    pub async fn toggle_mcp_server(&self, server_name: &str, enabled: bool) -> Result<()> {
+        let query = self.query.as_ref().ok_or_else(|| {
+            Error::CLIConnection(CLIConnectionError::new(
+                "Not connected. Call connect() first.",
+            ))
+        })?;
+        query.toggle_mcp_server(server_name, enabled).await
+    }
+
+    /// Stops a running task.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CLIConnectionError`] if not connected.
+    pub async fn stop_task(&self, task_id: &str) -> Result<()> {
+        let query = self.query.as_ref().ok_or_else(|| {
+            Error::CLIConnection(CLIConnectionError::new(
+                "Not connected. Call connect() first.",
+            ))
+        })?;
+        query.stop_task(task_id).await
     }
 
     /// Returns the server initialization response, if available.
