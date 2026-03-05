@@ -261,7 +261,10 @@ fn ensure_query_succeeded(messages: &[Message], context: &str) -> Result<()> {
         Message::Result(result) => Some(result),
         _ => None,
     }) else {
-        return Ok(());
+        return Err(ExecutorError::execution_failed(
+            context,
+            "claude query completed without a terminal result message",
+        ));
     };
 
     if result.is_error {
@@ -382,6 +385,19 @@ mod tests {
     fn query_success_check_accepts_success_result_messages() {
         let messages = vec![result_message(false, Some("ok"))];
         assert!(ensure_query_succeeded(&messages, "spawn failed").is_ok());
+    }
+
+    #[test]
+    fn query_success_check_rejects_missing_result_messages() {
+        let messages = Vec::new();
+
+        let error = ensure_query_succeeded(&messages, "spawn failed")
+            .expect_err("missing terminal result message should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("without a terminal result message")
+        );
     }
 
     #[test]
