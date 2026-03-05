@@ -4,15 +4,17 @@
 
 ## 概述
 
-该仓库是一个 Rust workspace，包含两个以官方 SDK 核心能力对齐为目标的客户端 SDK：
+该仓库是一个 Rust workspace，包含以官方 SDK 核心能力对齐为目标的客户端 SDK，以及统一抽象层 crate：
 
 - `codex-client-sdk`（库名 `codex`）：面向 Codex CLI，对齐官方 TypeScript SDK 核心工作流。
 - `claude-code-client-sdk`（库名 `claude_code`）：面向 Claude Code CLI，对齐官方 Python SDK 核心工作流。
+- `unified-agent-sdk`：构建在 Codex/Claude Code SDK 之上的统一执行器、配置与事件抽象。
 
 | Crate | 库名 | 路径 | 对齐目标 |
 | --- | --- | --- | --- |
 | `codex-client-sdk` | `codex` | `crates/codex` | 官方 Codex TypeScript SDK |
 | `claude-code-client-sdk` | `claude_code` | `crates/claude-code` | 官方 Claude Agent Python SDK |
+| `unified-agent-sdk` | `unified_agent_sdk` | `unified-agent-sdk` | 对工作区 SDK 的统一抽象层 |
 
 ## 仓库结构
 
@@ -30,6 +32,10 @@
 │       ├── tests/
 │       ├── README.md
 │       └── README_zh.md
+├── unified-agent-sdk
+│   ├── src/
+│   ├── README.md
+│   └── ROADMAP.md
 └── LICENSE
 ```
 
