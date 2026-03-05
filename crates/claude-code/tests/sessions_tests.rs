@@ -107,3 +107,60 @@ fn test_get_session_messages_rejects_invalid_session_id() {
     let messages = get_session_messages("not-a-uuid", None, None, 0);
     assert!(messages.is_empty());
 }
+
+#[test]
+fn test_list_sessions_handles_multibyte_prompt_truncation_safely() {
+    let lock = ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("lock");
+    let config_dir = unique_temp_dir().join("claude-config-multibyte");
+    let project_path = "/tmp/mock-project-multibyte";
+    let session_id = "12345678-1234-1234-1234-1234567890ac";
+
+    let sanitized = sanitize_path(project_path);
+    let project_dir = config_dir.join("projects").join(sanitized);
+    fs::create_dir_all(&project_dir).expect("create project dir");
+    let session_file = project_dir.join(format!("{session_id}.jsonl"));
+
+    let long_prompt = "你".repeat(240);
+    let lines = vec![
+        json!({
+            "type": "user",
+            "uuid": "33333333-3333-3333-3333-333333333333",
+            "sessionId": session_id,
+            "message": {"role": "user", "content": long_prompt}
+        }),
+        json!({
+            "type": "assistant",
+            "uuid": "44444444-4444-4444-4444-444444444444",
+            "parentUuid": "33333333-3333-3333-3333-333333333333",
+            "sessionId": session_id,
+            "message": {"role": "assistant", "content": [{"type":"text","text":"ok"}]}
+        }),
+    ];
+
+    let mut text = String::new();
+    for line in lines {
+        text.push_str(&line.to_string());
+        text.push('\n');
+    }
+    fs::write(session_file, text).expect("write session");
+
+    // SAFETY: Serialized via ENV_LOCK in this test module.
+    unsafe {
+        std::env::set_var("CLAUDE_CONFIG_DIR", &config_dir);
+    }
+
+    let sessions = list_sessions(Some(project_path), None, false);
+    assert_eq!(sessions.len(), 1);
+    assert!(sessions[0].summary.ends_with("..."));
+    assert_eq!(sessions[0].summary.chars().count(), 203);
+
+    // SAFETY: Serialized via ENV_LOCK in this test module.
+    unsafe {
+        std::env::remove_var("CLAUDE_CONFIG_DIR");
+    }
+    drop(lock);
+    let _ = fs::remove_dir_all(config_dir.parent().expect("parent"));
+}

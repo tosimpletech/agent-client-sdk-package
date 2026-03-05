@@ -227,8 +227,9 @@ fn extract_first_prompt(entries: &[Value]) -> Option<String> {
                 continue;
             }
 
-            if candidate.len() > 200 {
-                return Some(format!("{}...", candidate[..200].trim_end()));
+            if candidate.chars().count() > 200 {
+                let truncated: String = candidate.chars().take(200).collect();
+                return Some(format!("{}...", truncated.trim_end()));
             }
             return Some(candidate);
         }

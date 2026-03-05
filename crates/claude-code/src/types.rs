@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 use crate::errors::Error;
@@ -696,8 +696,7 @@ pub struct McpClaudeAiProxyServerConfig {
 }
 
 /// MCP server config shape returned by `get_mcp_status`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpServerStatusConfig {
     /// stdio server configuration.
     Stdio(McpStdioServerConfig),
@@ -709,6 +708,56 @@ pub enum McpServerStatusConfig {
     Sdk(McpSdkServerStatusConfig),
     /// Claude.ai proxy server configuration.
     ClaudeAiProxy(McpClaudeAiProxyServerConfig),
+    /// Forward-compatible fallback for unknown config payloads.
+    Unknown(Value),
+}
+
+impl Serialize for McpServerStatusConfig {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            McpServerStatusConfig::Stdio(value) => value.serialize(serializer),
+            McpServerStatusConfig::Sse(value) => value.serialize(serializer),
+            McpServerStatusConfig::Http(value) => value.serialize(serializer),
+            McpServerStatusConfig::Sdk(value) => value.serialize(serializer),
+            McpServerStatusConfig::ClaudeAiProxy(value) => value.serialize(serializer),
+            McpServerStatusConfig::Unknown(value) => value.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for McpServerStatusConfig {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let config_type = value
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        match config_type {
+            "stdio" => serde_json::from_value::<McpStdioServerConfig>(value)
+                .map(McpServerStatusConfig::Stdio)
+                .map_err(serde::de::Error::custom),
+            "sse" => serde_json::from_value::<McpSSEServerConfig>(value)
+                .map(McpServerStatusConfig::Sse)
+                .map_err(serde::de::Error::custom),
+            "http" => serde_json::from_value::<McpHttpServerConfig>(value)
+                .map(McpServerStatusConfig::Http)
+                .map_err(serde::de::Error::custom),
+            "sdk" => serde_json::from_value::<McpSdkServerStatusConfig>(value)
+                .map(McpServerStatusConfig::Sdk)
+                .map_err(serde::de::Error::custom),
+            "claudeai-proxy" => serde_json::from_value::<McpClaudeAiProxyServerConfig>(value)
+                .map(McpServerStatusConfig::ClaudeAiProxy)
+                .map_err(serde::de::Error::custom),
+            _ => Ok(McpServerStatusConfig::Unknown(value)),
+        }
+    }
 }
 
 /// Tool annotations returned in MCP status payloads.
