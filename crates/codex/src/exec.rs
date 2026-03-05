@@ -95,6 +95,11 @@ impl CodexExec {
         })
     }
 
+    /// Returns the resolved executable path used for subprocess invocations.
+    pub fn executable_path(&self) -> &str {
+        &self.executable_path
+    }
+
     /// Runs one `codex exec --experimental-json` invocation and returns a stream
     /// of stdout JSONL lines.
     ///

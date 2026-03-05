@@ -80,7 +80,7 @@ impl ClaudeCodeExecutor {
             && let Err(error) = old_client.disconnect().await
         {
             let mut sessions = self.sessions.lock().await;
-            sessions.insert(session_id, old_client);
+            sessions.entry(session_id).or_insert(old_client);
             return Err(map_claude_error(
                 "failed to disconnect replaced claude session",
                 error,
@@ -292,24 +292,16 @@ fn map_claude_error(context: &str, error: ClaudeError) -> ExecutorError {
 
 fn resolve_cli_path(options: &ClaudeAgentOptions) -> std::result::Result<PathBuf, String> {
     if let Some(cli_path) = &options.cli_path {
-        if cli_path.exists() {
-            return Ok(cli_path.clone());
-        }
-        return Err(format!(
-            "Configured Claude CLI path does not exist: {}",
-            cli_path.display()
-        ));
+        return validate_cli_path(cli_path, "configured Claude CLI path");
     }
 
     if let Ok(path) = which::which("claude") {
-        return Ok(path);
+        return validate_cli_path(&path, "Claude CLI path from PATH");
     }
 
     if let Ok(path) = std::env::var("CLAUDE_CODE_BUNDLED_CLI") {
         let bundled = PathBuf::from(path);
-        if bundled.exists() {
-            return Ok(bundled);
-        }
+        return validate_cli_path(&bundled, "bundled Claude CLI path");
     }
 
     Err(
@@ -318,10 +310,43 @@ fn resolve_cli_path(options: &ClaudeAgentOptions) -> std::result::Result<PathBuf
     )
 }
 
+fn validate_cli_path(path: &Path, label: &str) -> std::result::Result<PathBuf, String> {
+    if !path.exists() {
+        return Err(format!("{label} does not exist: {}", path.display()));
+    }
+    if !path.is_file() {
+        return Err(format!(
+            "{label} must point to an executable file: {}",
+            path.display()
+        ));
+    }
+    if !is_executable_file(path) {
+        return Err(format!("{label} is not executable: {}", path.display()));
+    }
+    Ok(path.to_path_buf())
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        path.metadata()
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use claude_code::ResultMessage;
+    use std::fs::{self, File};
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn result_message(is_error: bool, result: Option<&str>) -> Message {
         Message::Result(ResultMessage {
@@ -365,5 +390,62 @@ mod tests {
     fn query_success_check_accepts_success_result_messages() {
         let messages = vec![result_message(false, Some("ok"))];
         assert!(ensure_query_succeeded(&messages, "spawn failed").is_ok());
+    }
+
+    #[test]
+    fn resolve_cli_path_rejects_directory_override() {
+        let temp_dir = new_temp_path("claude-cli-dir");
+        fs::create_dir_all(&temp_dir).expect("directory should be created");
+
+        let options = ClaudeAgentOptions {
+            cli_path: Some(temp_dir.clone()),
+            ..ClaudeAgentOptions::default()
+        };
+
+        let result = resolve_cli_path(&options);
+        assert!(result.is_err());
+        assert!(
+            result
+                .expect_err("directory should be rejected")
+                .contains("must point to an executable file")
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn resolve_cli_path_accepts_executable_file_override() {
+        let temp_file = new_temp_path("claude-cli-file");
+        File::create(&temp_file).expect("file should be created");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&temp_file)
+                .expect("metadata should exist")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&temp_file, permissions).expect("permissions should be set");
+        }
+
+        let options = ClaudeAgentOptions {
+            cli_path: Some(temp_file.clone()),
+            ..ClaudeAgentOptions::default()
+        };
+
+        let resolved = resolve_cli_path(&options).expect("file should be accepted");
+        assert_eq!(resolved, temp_file);
+
+        let _ = fs::remove_file(temp_file);
+    }
+
+    fn new_temp_path(prefix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time should move forward")
+                .as_nanos()
+        ))
     }
 }

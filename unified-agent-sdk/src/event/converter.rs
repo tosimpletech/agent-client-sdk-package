@@ -42,9 +42,12 @@ impl EventConverter {
             NormalizedLog::TokenUsage { total, limit } => {
                 Some(AgentEvent::TokenUsageUpdated { total, limit })
             }
-            NormalizedLog::Error { message, .. } => {
-                Some(AgentEvent::ErrorOccurred { error: message })
-            }
+            NormalizedLog::Error {
+                error_type,
+                message,
+            } => Some(AgentEvent::ErrorOccurred {
+                error: format!("{error_type}: {message}"),
+            }),
         }
     }
 }
@@ -273,5 +276,26 @@ mod tests {
             },
         });
         assert!(running.is_empty());
+    }
+
+    #[test]
+    fn maps_error_consistently_across_conversion_helpers() {
+        let one_to_one = EventConverter::convert(NormalizedLog::Error {
+            error_type: "io".to_string(),
+            message: "permission denied".to_string(),
+        });
+        let fan_out = from_normalized_log(NormalizedLog::Error {
+            error_type: "io".to_string(),
+            message: "permission denied".to_string(),
+        });
+
+        assert!(matches!(
+            one_to_one,
+            Some(AgentEvent::ErrorOccurred { error }) if error == "io: permission denied"
+        ));
+        assert!(matches!(
+            fan_out.as_slice(),
+            [AgentEvent::ErrorOccurred { error }] if error == "io: permission denied"
+        ));
     }
 }

@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tokio::time::timeout;
 
 use claude_code::{ClaudeAgentOptions, Prompt, SubprocessCliTransport};
-use codex::{Codex, ModelReasoningEffort};
+use codex::{CodexExec, ModelReasoningEffort};
 
 use crate::{
     error::{ExecutorError, Result},
@@ -428,14 +428,10 @@ fn normalize_variant_key(value: &str) -> String {
 
 async fn discover_codex() -> DiscoveryData {
     let fallback = fallback_discovery(ExecutorType::Codex);
-    if Codex::new(None).is_err() {
-        return fallback;
-    }
-
-    let codex_program = which::which("codex")
-        .ok()
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "codex".to_string());
+    let codex_program = match CodexExec::new(None, None, None) {
+        Ok(exec) => exec.executable_path().to_string(),
+        Err(_) => return fallback,
+    };
 
     let models = discover_from_commands(
         &codex_program,

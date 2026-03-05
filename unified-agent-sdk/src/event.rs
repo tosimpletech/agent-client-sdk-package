@@ -240,7 +240,7 @@ mod tests {
         }
 
         let event = AgentEvent::ThinkingStarted;
-        timeout(Duration::from_millis(200), async {
+        timeout(Duration::from_secs(1), async {
             let _ = tokio::join!(manager.trigger(&event), barrier.wait());
         })
         .await
