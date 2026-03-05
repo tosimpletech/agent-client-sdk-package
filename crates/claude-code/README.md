@@ -37,7 +37,7 @@ It supports:
 
 ## Status
 
-- Package version: `0.1.44` (`claude-code-client-sdk`)
+- Package version: `0.1.45` (`claude-code-client-sdk`)
 - Scope: parity-focused implementation of the core Python SDK workflow
 - Validation: parity-focused test suite and subprocess/e2e-style coverage in this crate
 - Rust docs: public API is documented and exported through `claude_code`
