@@ -692,8 +692,33 @@ fn parse_plain_list(output: &str) -> Vec<String> {
                 return None;
             }
 
-            let cleaned = trimmed
-                .trim_start_matches(['-', '*', '|'])
+            let mut candidate = trimmed.trim_start_matches(['-', '*', '|']).trim();
+            if let Some((prefix, suffix)) = candidate.split_once(':') {
+                let prefix = prefix.trim();
+                let suffix = suffix.trim();
+                let lower = prefix.to_ascii_lowercase();
+                let label_like = prefix.contains(' ')
+                    || matches!(
+                        lower.as_str(),
+                        "model"
+                            | "models"
+                            | "reasoning"
+                            | "reasoning levels"
+                            | "effort"
+                            | "efforts"
+                            | "available"
+                            | "available models"
+                            | "available reasoning levels"
+                    );
+                if label_like {
+                    if suffix.is_empty() {
+                        return None;
+                    }
+                    candidate = suffix;
+                }
+            }
+
+            let cleaned = candidate
                 .split_whitespace()
                 .next()?
                 .trim_matches(['|', ',', ';']);
@@ -732,7 +757,10 @@ fn looks_like_model_name(value: &str) -> bool {
     }
 
     let lower = normalized.to_ascii_lowercase();
-    if matches!(lower.as_str(), "model" | "models" | "name" | "id") {
+    if matches!(
+        lower.as_str(),
+        "model" | "models" | "name" | "id" | "available"
+    ) {
         return false;
     }
 
@@ -939,5 +967,29 @@ mod tests {
             .await
             .expect("reload after file update should work");
         assert_eq!(second.model.as_deref(), Some("gpt-5"));
+    }
+
+    #[test]
+    fn parse_models_output_skips_plain_text_headers() {
+        let parsed = parse_models_output(
+            r#"
+Available models:
+- claude-sonnet-4-5
+- claude-haiku-4-5
+"#,
+        );
+        assert_eq!(
+            parsed,
+            vec![
+                "claude-sonnet-4-5".to_string(),
+                "claude-haiku-4-5".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_models_output_accepts_inline_label_format() {
+        let parsed = parse_models_output("Available models: claude-sonnet-4-5");
+        assert_eq!(parsed, vec!["claude-sonnet-4-5".to_string()]);
     }
 }
