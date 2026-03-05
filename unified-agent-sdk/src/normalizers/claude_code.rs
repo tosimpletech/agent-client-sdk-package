@@ -111,10 +111,14 @@ impl ClaudeCodeLogNormalizer {
                 let mut logs = Vec::new();
                 for block in blocks {
                     match block {
-                        ContentBlock::Text(text) => logs.push(NormalizedLog::Message {
-                            role: Role::User,
-                            content: text.text,
-                        }),
+                        ContentBlock::Text(text) => {
+                            if !text.text.trim().is_empty() {
+                                logs.push(NormalizedLog::Message {
+                                    role: Role::User,
+                                    content: text.text,
+                                });
+                            }
+                        }
                         ContentBlock::ToolResult(result) => {
                             self.push_tool_result_log(&mut logs, result);
                         }
@@ -464,5 +468,25 @@ mod tests {
         );
         let logs_after_flush = normalizer.normalize(tool_result.as_bytes());
         assert!(logs_after_flush.is_empty());
+    }
+
+    #[test]
+    fn ignores_whitespace_only_user_text_blocks() {
+        let mut normalizer = ClaudeCodeLogNormalizer::new();
+
+        let user_message = concat!(
+            r#"{"type":"user","message":{"content":[{"type":"text","text":"   "},{"type":"text","text":"hello"}]}}"#,
+            "\n"
+        );
+        let logs = normalizer.normalize(user_message.as_bytes());
+
+        assert_eq!(logs.len(), 1);
+        assert!(matches!(
+            &logs[0],
+            NormalizedLog::Message {
+                role: Role::User,
+                content
+            } if content == "hello"
+        ));
     }
 }
