@@ -8,7 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use async_trait::async_trait;
 use chrono::Utc;
 use claude_code::{
-    ClaudeAgentOptions, ClaudeSdkClient, Error as ClaudeError, InputPrompt, Message,
+    ClaudeAgentOptions, ClaudeSdkClient, Error as ClaudeError, InputPrompt, Message, Prompt,
+    SubprocessCliTransport,
 };
 use tokio::sync::Mutex;
 
@@ -295,19 +296,10 @@ fn resolve_cli_path(options: &ClaudeAgentOptions) -> std::result::Result<PathBuf
         return validate_cli_path(cli_path, "configured Claude CLI path");
     }
 
-    if let Ok(path) = which::which("claude") {
-        return validate_cli_path(&path, "Claude CLI path from PATH");
-    }
-
-    if let Ok(path) = std::env::var("CLAUDE_CODE_BUNDLED_CLI") {
-        let bundled = PathBuf::from(path);
-        return validate_cli_path(&bundled, "bundled Claude CLI path");
-    }
-
-    Err(
-        "Claude Code CLI not found. Install with `npm install -g @anthropic-ai/claude-code`."
-            .to_string(),
-    )
+    let transport = SubprocessCliTransport::new(Prompt::Messages, options.clone())
+        .map_err(|error| error.to_string())?;
+    let resolved = PathBuf::from(&transport.cli_path);
+    validate_cli_path(&resolved, "Claude CLI path resolved by SDK")
 }
 
 fn validate_cli_path(path: &Path, label: &str) -> std::result::Result<PathBuf, String> {
