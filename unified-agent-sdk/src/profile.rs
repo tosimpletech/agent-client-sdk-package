@@ -558,6 +558,7 @@ async fn discover_from_commands(
 async fn run_discovery_command(program: &str, args: &[&str]) -> Option<String> {
     let mut command = Command::new(program);
     command
+        .kill_on_drop(true)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

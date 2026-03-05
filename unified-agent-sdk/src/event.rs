@@ -1,6 +1,6 @@
 //! Event system and hooks
 
-use futures::Stream;
+use futures::{Stream, future::join_all};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -179,9 +179,7 @@ impl HookManager {
         };
 
         if let Some(hooks) = hooks {
-            for hook in hooks {
-                hook(event).await;
-            }
+            join_all(hooks.into_iter().map(|hook| hook(event))).await;
         }
     }
 }
@@ -212,5 +210,40 @@ impl Stream for EventStream {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
         self.inner.as_mut().poll_next(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::Barrier;
+    use tokio::time::timeout;
+
+    #[tokio::test]
+    async fn trigger_executes_hooks_concurrently() {
+        let manager = HookManager::new();
+        let barrier = Arc::new(Barrier::new(3));
+
+        for _ in 0..2 {
+            let barrier = Arc::clone(&barrier);
+            manager.register(
+                EventType::ThinkingStarted,
+                Arc::new(move |_event| {
+                    let barrier = Arc::clone(&barrier);
+                    Box::pin(async move {
+                        barrier.wait().await;
+                    })
+                }),
+            );
+        }
+
+        let event = AgentEvent::ThinkingStarted;
+        timeout(Duration::from_millis(200), async {
+            let _ = tokio::join!(manager.trigger(&event), barrier.wait());
+        })
+        .await
+        .expect("hooks should all start and complete without sequential blocking");
     }
 }

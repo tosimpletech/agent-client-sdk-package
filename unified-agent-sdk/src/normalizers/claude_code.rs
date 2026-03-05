@@ -235,6 +235,8 @@ impl LogNormalizer for ClaudeCodeLogNormalizer {
             )));
         }
 
+        self.pending_tools.clear();
+
         logs
     }
 }
@@ -435,5 +437,32 @@ mod tests {
             &logs[0],
             NormalizedLog::Error { error_type, .. } if error_type == "execution_failed"
         ));
+    }
+
+    #[test]
+    fn flush_clears_pending_tool_calls() {
+        let mut normalizer = ClaudeCodeLogNormalizer::new();
+
+        let tool_start = concat!(
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"src/main.rs"}}],"model":"claude-3-7-sonnet"}}"#,
+            "\n"
+        );
+        let started = normalizer.normalize(tool_start.as_bytes());
+        assert!(matches!(
+            started.as_slice(),
+            [NormalizedLog::ToolCall {
+                status: ToolStatus::Started,
+                ..
+            }]
+        ));
+
+        let _ = normalizer.flush();
+
+        let tool_result = concat!(
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":{"ok":true},"is_error":false}]}}"#,
+            "\n"
+        );
+        let logs_after_flush = normalizer.normalize(tool_result.as_bytes());
+        assert!(logs_after_flush.is_empty());
     }
 }

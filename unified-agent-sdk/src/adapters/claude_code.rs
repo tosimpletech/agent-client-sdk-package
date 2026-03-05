@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -17,6 +18,8 @@ use crate::session::AgentSession;
 use crate::types::{ExecutorType, PermissionPolicy};
 
 const DEFAULT_SESSION_ID: &str = "default";
+const MAX_TRACKED_SESSIONS: usize = 64;
+static FALLBACK_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Executor adapter backed by `claude_code::ClaudeSdkClient`.
 #[derive(Clone)]
@@ -85,7 +88,24 @@ impl ClaudeCodeExecutor {
         }
 
         let mut sessions = self.sessions.lock().await;
-        sessions.insert(session_id, client);
+        let current_session_id = session_id.clone();
+        sessions.insert(current_session_id.clone(), client);
+        let evicted_client = if sessions.len() > MAX_TRACKED_SESSIONS {
+            let evicted_session_id = sessions
+                .keys()
+                .find(|session_id| *session_id != &current_session_id)
+                .cloned()
+                .unwrap_or_else(|| DEFAULT_SESSION_ID.to_string());
+            sessions.remove(&evicted_session_id)
+        } else {
+            None
+        };
+        drop(sessions);
+
+        if let Some(mut evicted_client) = evicted_client {
+            let _ = evicted_client.disconnect().await;
+        }
+
         Ok(())
     }
 
@@ -135,8 +155,8 @@ impl AgentExecutor for ClaudeCodeExecutor {
         let messages = client.receive_response().await.map_err(|error| {
             map_claude_error("failed to receive response from claude sdk client", error)
         })?;
-        let session_id =
-            extract_session_id(&messages).unwrap_or_else(|| DEFAULT_SESSION_ID.to_string());
+        ensure_query_succeeded(&messages, "failed to execute prompt in claude sdk session")?;
+        let session_id = extract_session_id(&messages).unwrap_or_else(unique_fallback_session_id);
 
         self.store_client(session_id.clone(), client).await?;
         Ok(self.to_agent_session(session_id, working_dir))
@@ -177,6 +197,10 @@ impl AgentExecutor for ClaudeCodeExecutor {
                 error,
             )
         })?;
+        ensure_query_succeeded(
+            &messages,
+            "failed to execute prompt in resumed claude session",
+        )?;
         let resumed_session_id =
             extract_session_id(&messages).unwrap_or_else(|| session_id.to_string());
 
@@ -225,6 +249,31 @@ fn extract_session_id(messages: &[Message]) -> Option<String> {
     })
 }
 
+fn unique_fallback_session_id() -> String {
+    let sequence = FALLBACK_SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let timestamp_nanos = Utc::now().timestamp_nanos_opt().unwrap_or_default();
+    format!("{DEFAULT_SESSION_ID}-{timestamp_nanos}-{sequence}")
+}
+
+fn ensure_query_succeeded(messages: &[Message], context: &str) -> Result<()> {
+    let Some(result) = messages.iter().rev().find_map(|message| match message {
+        Message::Result(result) => Some(result),
+        _ => None,
+    }) else {
+        return Ok(());
+    };
+
+    if result.is_error {
+        let detail = result
+            .result
+            .as_deref()
+            .unwrap_or("claude query returned an error result");
+        return Err(ExecutorError::execution_failed(context, detail));
+    }
+
+    Ok(())
+}
+
 fn map_claude_error(context: &str, error: ClaudeError) -> ExecutorError {
     match error {
         ClaudeError::CLINotFound(err) => ExecutorError::unavailable(context, err),
@@ -267,4 +316,54 @@ fn resolve_cli_path(options: &ClaudeAgentOptions) -> std::result::Result<PathBuf
         "Claude Code CLI not found. Install with `npm install -g @anthropic-ai/claude-code`."
             .to_string(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use claude_code::ResultMessage;
+
+    fn result_message(is_error: bool, result: Option<&str>) -> Message {
+        Message::Result(ResultMessage {
+            subtype: if is_error {
+                "error".to_string()
+            } else {
+                "success".to_string()
+            },
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error,
+            num_turns: 1,
+            session_id: "session-1".to_string(),
+            total_cost_usd: None,
+            usage: None,
+            result: result.map(str::to_string),
+            structured_output: None,
+        })
+    }
+
+    #[test]
+    fn fallback_session_ids_are_unique() {
+        let first = unique_fallback_session_id();
+        let second = unique_fallback_session_id();
+
+        assert_ne!(first, second);
+        assert!(first.starts_with(DEFAULT_SESSION_ID));
+        assert!(second.starts_with(DEFAULT_SESSION_ID));
+    }
+
+    #[test]
+    fn query_success_check_rejects_error_result_messages() {
+        let messages = vec![result_message(true, Some("permission denied"))];
+
+        let error = ensure_query_succeeded(&messages, "spawn failed")
+            .expect_err("error result message should fail");
+        assert!(error.to_string().contains("permission denied"));
+    }
+
+    #[test]
+    fn query_success_check_accepts_success_result_messages() {
+        let messages = vec![result_message(false, Some("ok"))];
+        assert!(ensure_query_succeeded(&messages, "spawn failed").is_ok());
+    }
 }
