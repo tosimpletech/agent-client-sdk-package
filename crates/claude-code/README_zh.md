@@ -37,7 +37,7 @@
 
 ## 状态
 
-- 版本：`0.1.44`（`claude-code-client-sdk`）
+- 版本：`0.1.45`（`claude-code-client-sdk`）
 - 范围：覆盖 Python SDK 核心工作流的对齐实现
 - 验证：包含对齐测试与 subprocess/e2e 风格测试
 - 文档：公开 API 已通过 `claude_code` 导出并附带文档
