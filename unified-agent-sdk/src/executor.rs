@@ -28,7 +28,7 @@ pub struct AvailabilityStatus {
 }
 
 /// Spawn configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SpawnConfig {
     /// Optional model override.
     pub model: Option<String>,

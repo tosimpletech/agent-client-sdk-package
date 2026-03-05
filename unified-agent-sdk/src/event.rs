@@ -120,8 +120,11 @@ impl AgentEvent {
 }
 
 /// Event hook callback
-pub type EventHook =
-    Arc<dyn Fn(&AgentEvent) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+pub type EventHook = Arc<
+    dyn for<'event> Fn(&'event AgentEvent) -> Pin<Box<dyn Future<Output = ()> + Send + 'event>>
+        + Send
+        + Sync,
+>;
 
 /// Hook manager
 pub struct HookManager {
@@ -138,7 +141,10 @@ impl HookManager {
 
     /// Registers a hook for a specific [`EventType`].
     pub fn register(&self, event_type: EventType, hook: EventHook) {
-        let mut hooks = self.hooks.write().unwrap();
+        let mut hooks = self
+            .hooks
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         hooks.entry(event_type).or_default().push(hook);
     }
 
@@ -165,7 +171,10 @@ impl HookManager {
     /// ```
     pub async fn trigger(&self, event: &AgentEvent) {
         let hooks = {
-            let hooks_map = self.hooks.read().unwrap();
+            let hooks_map = self
+                .hooks
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             hooks_map.get(&event.event_type()).cloned()
         };
 

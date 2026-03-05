@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::Utc;
 use claude_code::{
     ClaudeAgentOptions, ClaudeSdkClient, Error as ClaudeError, InputPrompt, Message,
 };
@@ -69,15 +70,22 @@ impl ClaudeCodeExecutor {
     async fn store_client(&self, session_id: String, client: ClaudeSdkClient) -> Result<()> {
         let old_client = {
             let mut sessions = self.sessions.lock().await;
-            sessions.insert(session_id, client)
+            sessions.remove(&session_id)
         };
 
-        if let Some(mut old_client) = old_client {
-            old_client.disconnect().await.map_err(|error| {
-                map_claude_error("failed to disconnect replaced claude session", error)
-            })?;
+        if let Some(mut old_client) = old_client
+            && let Err(error) = old_client.disconnect().await
+        {
+            let mut sessions = self.sessions.lock().await;
+            sessions.insert(session_id, old_client);
+            return Err(map_claude_error(
+                "failed to disconnect replaced claude session",
+                error,
+            ));
         }
 
+        let mut sessions = self.sessions.lock().await;
+        sessions.insert(session_id, client);
         Ok(())
     }
 
@@ -86,6 +94,8 @@ impl ClaudeCodeExecutor {
             session_id,
             executor_type: ExecutorType::ClaudeCode,
             working_dir: working_dir.to_path_buf(),
+            created_at: Utc::now(),
+            last_message_id: None,
         }
     }
 }

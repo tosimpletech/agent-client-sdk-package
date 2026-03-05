@@ -244,13 +244,9 @@ impl ProfileManager {
         let discovered_model = discovery
             .as_ref()
             .and_then(|data| preferred_model(&data.models));
-        let discovered_reasoning = discovery.as_ref().and_then(|data| {
-            if data.models.is_empty() {
-                None
-            } else {
-                preferred_reasoning_level(&data.reasoning_levels)
-            }
-        });
+        let discovered_reasoning = discovery
+            .as_ref()
+            .and_then(|data| preferred_reasoning_level(&data.reasoning_levels));
 
         Ok(ResolvedConfig {
             model: config
@@ -879,6 +875,40 @@ mod tests {
         assert_eq!(resolved.model.as_deref(), Some("gpt-5"));
         assert_eq!(resolved.reasoning.as_deref(), Some("high"));
         assert_eq!(resolved.permission_policy, Some(PermissionPolicy::Deny));
+    }
+
+    #[tokio::test]
+    async fn resolve_uses_discovered_reasoning_when_models_are_unavailable() {
+        let fixture = TestConfigFile::new();
+        fixture.write("{}");
+
+        let manager = ProfileManager::with_path(&fixture.path);
+        {
+            let mut cache = manager.discovery_cache.write().await;
+            cache.insert(
+                ExecutorType::Codex,
+                CachedDiscovery {
+                    data: DiscoveryData {
+                        models: Vec::new(),
+                        reasoning_levels: vec!["high".to_string()],
+                    },
+                    expires_at: Instant::now() + Duration::from_secs(60),
+                },
+            );
+        }
+
+        let resolved = manager
+            .resolve(&ExecutorConfig {
+                profile_id: ProfileId::new(ExecutorType::Codex, None),
+                model_override: None,
+                reasoning_override: None,
+                permission_policy: None,
+            })
+            .await
+            .expect("resolved config should use discovery fallback values");
+
+        assert_eq!(resolved.model, None);
+        assert_eq!(resolved.reasoning.as_deref(), Some("high"));
     }
 
     #[tokio::test]
