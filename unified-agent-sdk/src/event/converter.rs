@@ -100,7 +100,7 @@ fn map_tool_call(
         }],
         ToolStatus::Failed => vec![AgentEvent::ToolCallFailed {
             tool: name,
-            error: format_tool_error(args, action),
+            error: extract_tool_error(&args),
         }],
     }
 }
@@ -122,14 +122,6 @@ fn extract_tool_error(args: &Value) -> String {
         })
         .filter(|message| !message.is_empty() && message != "null")
         .unwrap_or_else(|| "tool call failed".to_string())
-}
-
-fn format_tool_error(args: Value, action: ActionType) -> String {
-    let serialized_args =
-        serde_json::to_string(&args).unwrap_or_else(|_| "<invalid-args>".to_string());
-    let serialized_action =
-        serde_json::to_string(&action).unwrap_or_else(|_| "<invalid-action>".to_string());
-    format!("tool call failed; args={serialized_args}; action={serialized_action}")
 }
 
 #[cfg(test)]
@@ -269,7 +261,7 @@ mod tests {
         });
         assert!(matches!(
             failed.as_slice(),
-            [AgentEvent::ToolCallFailed { tool, .. }] if tool == "bash"
+            [AgentEvent::ToolCallFailed { tool, error }] if tool == "bash" && error == "tool call failed"
         ));
 
         let running = from_normalized_log(NormalizedLog::ToolCall {
