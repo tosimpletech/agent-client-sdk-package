@@ -241,18 +241,20 @@ async fn passes_approval_policy_to_exec() {
 #[tokio::test]
 async fn passes_codex_config_overrides_as_toml_flags() {
     let harness = MockCodexHarness::new(vec![success_events(Some("thread_1"), "ok", "item_1")]);
-    let mut options = CodexOptions::default();
-    options.config = Some(
-        json!({
-            "approval_policy": "never",
-            "sandbox_workspace_write": { "network_access": true },
-            "retry_budget": 3,
-            "tool_rules": { "allow": ["git status", "git diff"] }
-        })
-        .as_object()
-        .expect("config object")
-        .clone(),
-    );
+    let options = CodexOptions {
+        config: Some(
+            json!({
+                "approval_policy": "never",
+                "sandbox_workspace_write": { "network_access": true },
+                "retry_budget": 3,
+                "tool_rules": { "allow": ["git status", "git diff"] }
+            })
+            .as_object()
+            .expect("config object")
+            .clone(),
+        ),
+        ..Default::default()
+    };
     let codex = harness.codex(options).expect("codex");
 
     let thread = codex.start_thread(None);
@@ -277,15 +279,17 @@ async fn passes_codex_config_overrides_as_toml_flags() {
 #[tokio::test]
 async fn errors_on_null_config_override_values() {
     let harness = MockCodexHarness::new(vec![success_events(Some("thread_1"), "ok", "item_1")]);
-    let mut options = CodexOptions::default();
-    options.config = Some(
-        json!({
-            "approval_policy": null
-        })
-        .as_object()
-        .expect("config object")
-        .clone(),
-    );
+    let options = CodexOptions {
+        config: Some(
+            json!({
+                "approval_policy": null
+            })
+            .as_object()
+            .expect("config object")
+            .clone(),
+        ),
+        ..Default::default()
+    };
     let codex = harness.codex(options).expect("codex");
     let thread = codex.start_thread(None);
 
@@ -299,17 +303,19 @@ async fn errors_on_null_config_override_values() {
 #[tokio::test]
 async fn serializes_non_bare_inline_table_keys_with_quotes() {
     let harness = MockCodexHarness::new(vec![success_events(Some("thread_1"), "ok", "item_1")]);
-    let mut options = CodexOptions::default();
-    options.config = Some(
-        json!({
-            "tool_rules": {
-                "allow list": ["git status"]
-            }
-        })
-        .as_object()
-        .expect("config object")
-        .clone(),
-    );
+    let options = CodexOptions {
+        config: Some(
+            json!({
+                "tool_rules": {
+                    "allow list": ["git status"]
+                }
+            })
+            .as_object()
+            .expect("config object")
+            .clone(),
+        ),
+        ..Default::default()
+    };
     let codex = harness.codex(options).expect("codex");
     let thread = codex.start_thread(None);
     thread.run("quoted key", None).await.expect("run");
@@ -324,15 +330,17 @@ async fn serializes_non_bare_inline_table_keys_with_quotes() {
 #[tokio::test]
 async fn thread_options_override_global_config() {
     let harness = MockCodexHarness::new(vec![success_events(Some("thread_1"), "ok", "item_1")]);
-    let mut options = CodexOptions::default();
-    options.config = Some(
-        json!({
-            "approval_policy": "never"
-        })
-        .as_object()
-        .expect("config object")
-        .clone(),
-    );
+    let options = CodexOptions {
+        config: Some(
+            json!({
+                "approval_policy": "never"
+            })
+            .as_object()
+            .expect("config object")
+            .clone(),
+        ),
+        ..Default::default()
+    };
     let codex = harness.codex(options).expect("codex");
 
     let thread = codex.start_thread(Some(ThreadOptions {
