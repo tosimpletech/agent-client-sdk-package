@@ -12,7 +12,7 @@ Unified SDK for multiple AI coding agents (Claude Code, Codex, etc.) providing a
 - [x] `AvailabilityStatus` - runtime availability check
 - [x] `SpawnConfig` - spawn configuration
 
-**Status**: Framework complete, implementation pending
+**Status**: Implemented and used by Codex/Claude Code adapters
 
 ### 2. Profile System (`profile.rs`)
 - [x] `ProfileId` - executor + variant identifier
@@ -20,21 +20,21 @@ Unified SDK for multiple AI coding agents (Claude Code, Codex, etc.) providing a
 - [x] `ProfileManager` - configuration management with caching
 - [x] `ResolvedConfig` - final resolved configuration
 
-**Status**: Framework complete, implementation pending
+**Status**: Implemented (file loading, cache reload, runtime discovery, config resolve)
 
 ### 3. Log System (`log.rs`)
 - [x] `NormalizedLog` - unified log format
 - [x] `ActionType` - tool action classification
 - [x] `LogNormalizer` trait - log normalization
 
-**Status**: Framework complete, implementation pending
+**Status**: Implemented with Codex and Claude Code normalizers
 
 ### 4. Session Management (`session.rs`)
 - [x] `AgentSession` - active session handle
 - [x] `SessionMetadata` - persistence metadata
 - [x] `SessionResume` - resume information
 
-**Status**: Framework complete, implementation pending
+**Status**: Core implemented (metadata + event pipeline); lifecycle controls (`wait`/`cancel`) pending
 
 ### 5. Event System (`event.rs`)
 - [x] `AgentEvent` - unified event types
@@ -42,30 +42,30 @@ Unified SDK for multiple AI coding agents (Claude Code, Codex, etc.) providing a
 - [x] `EventStream` - event stream abstraction
 - [x] `HookManager` - hook registration and triggering
 
-**Status**: Framework complete, implementation pending
+**Status**: Implemented (normalized log -> unified events pipeline available)
 
 ## Implementation Phases
 
 ### Phase 1: Core Implementation
-- [ ] Implement `ProfileManager` with file-based storage
-- [ ] Implement basic `LogNormalizer` for Codex
-- [ ] Implement basic `LogNormalizer` for Claude Code
-- [ ] Add process management to `AgentSession`
+- [x] Implement `ProfileManager` with file-based storage
+- [x] Implement basic `LogNormalizer` for Codex
+- [x] Implement basic `LogNormalizer` for Claude Code
+- [ ] Add process management to `AgentSession` (`wait`/`cancel`)
 
 ### Phase 2: Adapters
-- [ ] Create `CodexAdapter` implementing `AgentExecutor`
-- [ ] Create `ClaudeCodeAdapter` implementing `AgentExecutor`
-- [ ] Implement log-to-event conversion
+- [x] Create `CodexAdapter` implementing `AgentExecutor`
+- [x] Create `ClaudeCodeAdapter` implementing `AgentExecutor`
+- [x] Implement log-to-event conversion
 - [ ] Add integration tests
 
 ### Phase 3: Advanced Features
-- [ ] Add profile discovery mechanism
-- [ ] Add capability detection
+- [x] Add profile discovery mechanism
+- [x] Add capability detection
 - [ ] Performance optimization
 
 ### Phase 4: Polish & Documentation
 - [ ] Complete API documentation
-- [ ] Add usage examples
+- [x] Add usage examples
 - [ ] Performance optimization
 - [ ] Release v0.1.0
 
@@ -80,9 +80,9 @@ Unified Agent SDK (this crate)
   - LogNormalizer
   - EventStream + HookManager
        ↓
-Adapters (to be implemented)
-  - CodexAdapter
-  - ClaudeCodeAdapter
+Adapters
+  - CodexAdapter (implemented)
+  - ClaudeCodeAdapter (implemented)
        ↓
 Base SDKs
   - codex-sdk
@@ -116,7 +116,6 @@ Base SDKs
 
 ## Next Steps
 
-1. Implement `ProfileManager` with JSON file loading
-2. Create basic log normalizers for Codex and Claude Code
-3. Implement process spawning in adapters
-4. Add comprehensive tests
+1. Implement `AgentSession::wait` and `AgentSession::cancel`
+2. Add integration tests for adapters and end-to-end event flow
+3. Complete API docs and release checklist
