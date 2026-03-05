@@ -302,6 +302,10 @@ pub fn parse_message(data: &Value) -> std::result::Result<Option<Message>, Messa
                 is_error,
                 num_turns,
                 session_id: session_id.to_string(),
+                stop_reason: obj
+                    .get("stop_reason")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
                 total_cost_usd: obj.get("total_cost_usd").and_then(Value::as_f64),
                 usage: obj.get("usage").cloned(),
                 result: obj

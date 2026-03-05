@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 use crate::errors::Error;
@@ -673,6 +673,181 @@ pub enum McpServersOption {
     Raw(String),
 }
 
+/// SDK MCP server config shape used in MCP status responses.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpSdkServerStatusConfig {
+    /// Discriminator for in-process SDK transport (`"sdk"`).
+    #[serde(rename = "type")]
+    pub type_: String,
+    /// Logical server name used in MCP config maps.
+    pub name: String,
+}
+
+/// Claude.ai proxy MCP server config shape used in MCP status responses.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpClaudeAiProxyServerConfig {
+    /// Discriminator for Claude.ai proxy transport (`"claudeai-proxy"`).
+    #[serde(rename = "type")]
+    pub type_: String,
+    /// Proxy endpoint URL.
+    pub url: String,
+    /// Proxy identifier.
+    pub id: String,
+}
+
+/// MCP server config shape returned by `get_mcp_status`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum McpServerStatusConfig {
+    /// stdio server configuration.
+    Stdio(McpStdioServerConfig),
+    /// SSE server configuration.
+    Sse(McpSSEServerConfig),
+    /// HTTP server configuration.
+    Http(McpHttpServerConfig),
+    /// In-process SDK server configuration.
+    Sdk(McpSdkServerStatusConfig),
+    /// Claude.ai proxy server configuration.
+    ClaudeAiProxy(McpClaudeAiProxyServerConfig),
+    /// Forward-compatible fallback for unknown config payloads.
+    Unknown(Value),
+}
+
+impl Serialize for McpServerStatusConfig {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            McpServerStatusConfig::Stdio(value) => value.serialize(serializer),
+            McpServerStatusConfig::Sse(value) => value.serialize(serializer),
+            McpServerStatusConfig::Http(value) => value.serialize(serializer),
+            McpServerStatusConfig::Sdk(value) => value.serialize(serializer),
+            McpServerStatusConfig::ClaudeAiProxy(value) => value.serialize(serializer),
+            McpServerStatusConfig::Unknown(value) => value.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for McpServerStatusConfig {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let config_type = value
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        match config_type {
+            "stdio" => serde_json::from_value::<McpStdioServerConfig>(value)
+                .map(McpServerStatusConfig::Stdio)
+                .map_err(serde::de::Error::custom),
+            "sse" => serde_json::from_value::<McpSSEServerConfig>(value)
+                .map(McpServerStatusConfig::Sse)
+                .map_err(serde::de::Error::custom),
+            "http" => serde_json::from_value::<McpHttpServerConfig>(value)
+                .map(McpServerStatusConfig::Http)
+                .map_err(serde::de::Error::custom),
+            "sdk" => serde_json::from_value::<McpSdkServerStatusConfig>(value)
+                .map(McpServerStatusConfig::Sdk)
+                .map_err(serde::de::Error::custom),
+            "claudeai-proxy" => serde_json::from_value::<McpClaudeAiProxyServerConfig>(value)
+                .map(McpServerStatusConfig::ClaudeAiProxy)
+                .map_err(serde::de::Error::custom),
+            _ => Ok(McpServerStatusConfig::Unknown(value)),
+        }
+    }
+}
+
+/// Tool annotations returned in MCP status payloads.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct McpToolAnnotations {
+    /// Whether the tool is read-only.
+    #[serde(rename = "readOnly", skip_serializing_if = "Option::is_none")]
+    pub read_only: Option<bool>,
+    /// Whether the tool is destructive.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destructive: Option<bool>,
+    /// Whether the tool interacts with open-world/external systems.
+    #[serde(rename = "openWorld", skip_serializing_if = "Option::is_none")]
+    pub open_world: Option<bool>,
+}
+
+/// Tool metadata returned in MCP status payloads.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpToolInfo {
+    /// Tool name.
+    pub name: String,
+    /// Optional tool description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Optional tool annotations.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<McpToolAnnotations>,
+}
+
+/// Server metadata returned for connected MCP servers.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpServerInfo {
+    /// Server name.
+    pub name: String,
+    /// Server version.
+    pub version: String,
+}
+
+/// MCP server connection status.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum McpServerConnectionStatus {
+    /// Server is connected.
+    #[serde(rename = "connected")]
+    Connected,
+    /// Server connection failed.
+    #[serde(rename = "failed")]
+    Failed,
+    /// Server needs authentication.
+    #[serde(rename = "needs-auth")]
+    NeedsAuth,
+    /// Server connection is pending.
+    #[serde(rename = "pending")]
+    Pending,
+    /// Server is disabled.
+    #[serde(rename = "disabled")]
+    Disabled,
+}
+
+/// Status entry for a single MCP server.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpServerStatus {
+    /// Server name as configured.
+    pub name: String,
+    /// Current connection status.
+    pub status: McpServerConnectionStatus,
+    /// Server info from MCP initialize handshake.
+    #[serde(rename = "serverInfo", skip_serializing_if = "Option::is_none")]
+    pub server_info: Option<McpServerInfo>,
+    /// Error message when status is `failed`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Server configuration payload.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<McpServerStatusConfig>,
+    /// Configuration scope (for example `project`, `user`, `local`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// Tools exposed by this server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<McpToolInfo>>,
+}
+
+/// Typed MCP status response payload returned by `get_mcp_status`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpStatusResponse {
+    /// Status entries for all configured servers.
+    #[serde(rename = "mcpServers")]
+    pub mcp_servers: Vec<McpServerStatus>,
+}
+
 /// Configuration for loading plugins in the SDK.
 ///
 /// Only local plugins are currently supported.
@@ -925,6 +1100,180 @@ pub struct SystemMessage {
     pub data: Value,
 }
 
+/// Token/tool usage reported in task-related system messages.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskUsage {
+    /// Total token count used so far.
+    pub total_tokens: i64,
+    /// Number of tool invocations used so far.
+    pub tool_uses: i64,
+    /// Task duration in milliseconds.
+    pub duration_ms: i64,
+}
+
+/// Status values for task notification messages.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TaskNotificationStatus {
+    /// Task completed successfully.
+    #[serde(rename = "completed")]
+    Completed,
+    /// Task failed.
+    #[serde(rename = "failed")]
+    Failed,
+    /// Task was stopped.
+    #[serde(rename = "stopped")]
+    Stopped,
+}
+
+/// Typed view for `system` messages with subtype `task_started`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskStartedMessage {
+    /// Always `task_started`.
+    pub subtype: String,
+    /// Raw system payload.
+    pub data: Value,
+    /// Task identifier.
+    pub task_id: String,
+    /// Human-readable task description.
+    pub description: String,
+    /// Message UUID.
+    pub uuid: String,
+    /// Session identifier.
+    pub session_id: String,
+    /// Optional parent tool use id.
+    pub tool_use_id: Option<String>,
+    /// Optional task type.
+    pub task_type: Option<String>,
+}
+
+/// Typed view for `system` messages with subtype `task_progress`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskProgressMessage {
+    /// Always `task_progress`.
+    pub subtype: String,
+    /// Raw system payload.
+    pub data: Value,
+    /// Task identifier.
+    pub task_id: String,
+    /// Human-readable task description.
+    pub description: String,
+    /// Current task usage metrics.
+    pub usage: TaskUsage,
+    /// Message UUID.
+    pub uuid: String,
+    /// Session identifier.
+    pub session_id: String,
+    /// Optional parent tool use id.
+    pub tool_use_id: Option<String>,
+    /// Optional last tool name.
+    pub last_tool_name: Option<String>,
+}
+
+/// Typed view for `system` messages with subtype `task_notification`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskNotificationMessage {
+    /// Always `task_notification`.
+    pub subtype: String,
+    /// Raw system payload.
+    pub data: Value,
+    /// Task identifier.
+    pub task_id: String,
+    /// Task status.
+    pub status: TaskNotificationStatus,
+    /// Output file path.
+    pub output_file: String,
+    /// Human-readable task summary.
+    pub summary: String,
+    /// Message UUID.
+    pub uuid: String,
+    /// Session identifier.
+    pub session_id: String,
+    /// Optional parent tool use id.
+    pub tool_use_id: Option<String>,
+    /// Optional task usage metrics.
+    pub usage: Option<TaskUsage>,
+}
+
+impl SystemMessage {
+    /// Returns a typed `TaskStartedMessage` view for `task_started` messages.
+    pub fn as_task_started(&self) -> Option<TaskStartedMessage> {
+        if self.subtype != "task_started" {
+            return None;
+        }
+        let obj = self.data.as_object()?;
+        Some(TaskStartedMessage {
+            subtype: self.subtype.clone(),
+            data: self.data.clone(),
+            task_id: obj.get("task_id")?.as_str()?.to_string(),
+            description: obj.get("description")?.as_str()?.to_string(),
+            uuid: obj.get("uuid")?.as_str()?.to_string(),
+            session_id: obj.get("session_id")?.as_str()?.to_string(),
+            tool_use_id: obj
+                .get("tool_use_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            task_type: obj
+                .get("task_type")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+        })
+    }
+
+    /// Returns a typed `TaskProgressMessage` view for `task_progress` messages.
+    pub fn as_task_progress(&self) -> Option<TaskProgressMessage> {
+        if self.subtype != "task_progress" {
+            return None;
+        }
+        let obj = self.data.as_object()?;
+        let usage = serde_json::from_value::<TaskUsage>(obj.get("usage")?.clone()).ok()?;
+        Some(TaskProgressMessage {
+            subtype: self.subtype.clone(),
+            data: self.data.clone(),
+            task_id: obj.get("task_id")?.as_str()?.to_string(),
+            description: obj.get("description")?.as_str()?.to_string(),
+            usage,
+            uuid: obj.get("uuid")?.as_str()?.to_string(),
+            session_id: obj.get("session_id")?.as_str()?.to_string(),
+            tool_use_id: obj
+                .get("tool_use_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            last_tool_name: obj
+                .get("last_tool_name")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+        })
+    }
+
+    /// Returns a typed `TaskNotificationMessage` view for `task_notification` messages.
+    pub fn as_task_notification(&self) -> Option<TaskNotificationMessage> {
+        if self.subtype != "task_notification" {
+            return None;
+        }
+        let obj = self.data.as_object()?;
+        let status =
+            serde_json::from_value::<TaskNotificationStatus>(obj.get("status")?.clone()).ok()?;
+        let usage = obj
+            .get("usage")
+            .and_then(|value| serde_json::from_value::<TaskUsage>(value.clone()).ok());
+        Some(TaskNotificationMessage {
+            subtype: self.subtype.clone(),
+            data: self.data.clone(),
+            task_id: obj.get("task_id")?.as_str()?.to_string(),
+            status,
+            output_file: obj.get("output_file")?.as_str()?.to_string(),
+            summary: obj.get("summary")?.as_str()?.to_string(),
+            uuid: obj.get("uuid")?.as_str()?.to_string(),
+            session_id: obj.get("session_id")?.as_str()?.to_string(),
+            tool_use_id: obj
+                .get("tool_use_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            usage,
+        })
+    }
+}
+
 /// Final result message with cost and usage information.
 ///
 /// This is the last message received for a query, containing summary statistics.
@@ -937,6 +1286,7 @@ pub struct SystemMessage {
 /// - `is_error` — Whether the query resulted in an error.
 /// - `num_turns` — Number of conversation turns in the query.
 /// - `session_id` — The session identifier.
+/// - `stop_reason` — Optional reason for why the turn ended.
 /// - `total_cost_usd` — Optional total cost in USD.
 /// - `usage` — Optional token usage breakdown (input_tokens, output_tokens,
 ///   cache_creation_input_tokens, cache_read_input_tokens).
@@ -956,6 +1306,8 @@ pub struct ResultMessage {
     pub num_turns: i64,
     /// Session identifier.
     pub session_id: String,
+    /// Optional reason for why the turn ended.
+    pub stop_reason: Option<String>,
     /// Optional total cost in USD.
     pub total_cost_usd: Option<f64>,
     /// Optional usage summary payload.
@@ -985,6 +1337,43 @@ pub struct StreamEvent {
     /// Raw stream event payload.
     pub event: Value,
     /// Optional parent tool use identifier.
+    pub parent_tool_use_id: Option<String>,
+}
+
+/// Session metadata returned by [`list_sessions`](crate::list_sessions).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SDKSessionInfo {
+    /// Session identifier (UUID).
+    pub session_id: String,
+    /// Display summary for the session.
+    pub summary: String,
+    /// Last modified time in milliseconds since epoch.
+    pub last_modified: i64,
+    /// Session file size in bytes.
+    pub file_size: u64,
+    /// User-defined custom title if present.
+    pub custom_title: Option<String>,
+    /// First meaningful prompt from the session.
+    pub first_prompt: Option<String>,
+    /// Git branch associated with the session.
+    pub git_branch: Option<String>,
+    /// Working directory associated with the session.
+    pub cwd: Option<String>,
+}
+
+/// User/assistant message returned by [`get_session_messages`](crate::get_session_messages).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionMessage {
+    /// Message type (`"user"` or `"assistant"`).
+    #[serde(rename = "type")]
+    pub type_: String,
+    /// Message UUID.
+    pub uuid: String,
+    /// Session identifier.
+    pub session_id: String,
+    /// Raw Anthropic message payload.
+    pub message: Value,
+    /// Always `None` for top-level conversation messages.
     pub parent_tool_use_id: Option<String>,
 }
 

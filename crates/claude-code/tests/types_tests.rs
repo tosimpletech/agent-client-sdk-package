@@ -81,6 +81,7 @@ fn test_result_message() {
         is_error: false,
         num_turns: 1,
         session_id: "session-123".to_string(),
+        stop_reason: Some("end_turn".to_string()),
         total_cost_usd: Some(0.01),
         usage: None,
         result: None,
@@ -89,6 +90,7 @@ fn test_result_message() {
     assert_eq!(msg.subtype, "success");
     assert_eq!(msg.total_cost_usd, Some(0.01));
     assert_eq!(msg.session_id, "session-123");
+    assert_eq!(msg.stop_reason.as_deref(), Some("end_turn"));
 }
 
 #[test]
@@ -148,4 +150,85 @@ fn test_tool_permission_context_default() {
 
     let serialized = serde_json::to_value(&context).expect("serialize context");
     assert_eq!(serialized, json!({"suggestions": []}));
+}
+
+#[test]
+fn test_mcp_status_response_deserialization() {
+    let raw = json!({
+        "mcpServers": [{
+            "name": "mock",
+            "status": "connected",
+            "serverInfo": {"name": "mock", "version": "1.0.0"},
+            "scope": "project",
+            "tools": [{"name": "echo"}]
+        }]
+    });
+    let parsed: claude_code::McpStatusResponse =
+        serde_json::from_value(raw).expect("typed mcp status");
+    assert_eq!(parsed.mcp_servers.len(), 1);
+    assert_eq!(parsed.mcp_servers[0].name, "mock");
+}
+
+#[test]
+fn test_mcp_status_config_deserialization_is_type_disambiguated() {
+    let raw = json!({
+        "mcpServers": [
+            {
+                "name": "http-server",
+                "status": "connected",
+                "config": {"type": "http", "url": "https://example.com"}
+            },
+            {
+                "name": "sse-server",
+                "status": "connected",
+                "config": {"type": "sse", "url": "https://example.com/sse"}
+            },
+            {
+                "name": "proxy-server",
+                "status": "connected",
+                "config": {"type": "claudeai-proxy", "url": "https://proxy", "id": "proxy-1"}
+            },
+            {
+                "name": "unknown-server",
+                "status": "connected",
+                "config": {"type": "future-type", "foo": "bar"}
+            }
+        ]
+    });
+
+    let parsed: claude_code::McpStatusResponse =
+        serde_json::from_value(raw).expect("typed mcp status");
+    assert_eq!(parsed.mcp_servers.len(), 4);
+
+    match parsed.mcp_servers[0].config.as_ref().expect("http config") {
+        claude_code::McpServerStatusConfig::Http(config) => {
+            assert_eq!(config.type_, "http");
+        }
+        other => panic!("expected Http config, got {other:?}"),
+    }
+
+    match parsed.mcp_servers[1].config.as_ref().expect("sse config") {
+        claude_code::McpServerStatusConfig::Sse(config) => {
+            assert_eq!(config.type_, "sse");
+        }
+        other => panic!("expected Sse config, got {other:?}"),
+    }
+
+    match parsed.mcp_servers[2].config.as_ref().expect("proxy config") {
+        claude_code::McpServerStatusConfig::ClaudeAiProxy(config) => {
+            assert_eq!(config.id, "proxy-1");
+        }
+        other => panic!("expected ClaudeAiProxy config, got {other:?}"),
+    }
+
+    match parsed.mcp_servers[3]
+        .config
+        .as_ref()
+        .expect("unknown config")
+    {
+        claude_code::McpServerStatusConfig::Unknown(value) => {
+            assert_eq!(value["type"], "future-type");
+        }
+        other => panic!("expected Unknown config, got {other:?}"),
+    }
 }

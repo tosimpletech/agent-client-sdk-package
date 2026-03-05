@@ -37,7 +37,7 @@ It supports:
 
 ## Status
 
-- Package version: `0.1.44` (`claude-code-client-sdk`)
+- Package version: `0.1.46` (`claude-code-client-sdk`)
 - Scope: parity-focused implementation of the core Python SDK workflow
 - Validation: parity-focused test suite and subprocess/e2e-style coverage in this crate
 - Rust docs: public API is documented and exported through `claude_code`
@@ -169,6 +169,10 @@ client.disconnect().await?;
   - `ClaudeSdkClient::interrupt`
   - `ClaudeSdkClient::disconnect`
   - control methods such as `set_permission_mode`, `set_model`, `rewind_files`, `get_mcp_status`, `get_server_info`
+  - runtime MCP/task controls: `reconnect_mcp_server`, `toggle_mcp_server`, `stop_task`
+- Session history
+  - `list_sessions`
+  - `get_session_messages`
 - Transport layer
   - `SubprocessCliTransport`
   - `Transport` trait and split helpers

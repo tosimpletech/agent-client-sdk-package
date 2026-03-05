@@ -29,8 +29,8 @@ use crate::message_parser::parse_message;
 use crate::sdk_mcp::McpSdkServer;
 use crate::transport::{TransportCloseHandle, TransportReader, TransportWriter};
 use crate::types::{
-    AgentDefinition, CanUseToolCallback, HookCallback, HookMatcher, Message, PermissionResult,
-    ToolPermissionContext,
+    AgentDefinition, CanUseToolCallback, HookCallback, HookMatcher, McpStatusResponse, Message,
+    PermissionResult, ToolPermissionContext,
 };
 
 /// Channel buffer size for SDK messages (matches Python SDK's buffer=100).
@@ -680,9 +680,13 @@ impl Query {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn get_mcp_status(&self) -> Result<Value> {
-        self.send_control_request(json!({ "subtype": "mcp_status" }), Duration::from_secs(60))
-            .await
+    pub async fn get_mcp_status(&self) -> Result<McpStatusResponse> {
+        let raw = self
+            .send_control_request(json!({ "subtype": "mcp_status" }), Duration::from_secs(60))
+            .await?;
+        serde_json::from_value(raw).map_err(|err| {
+            Error::Other(format!("Failed to decode typed MCP status response: {err}"))
+        })
     }
 
     /// Sends an interrupt signal to the CLI to stop the current operation.
@@ -760,6 +764,36 @@ impl Query {
     pub async fn rewind_files(&self, user_message_id: &str) -> Result<()> {
         self.send_control_request(
             json!({ "subtype": "rewind_files", "user_message_id": user_message_id }),
+            Duration::from_secs(60),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Reconnects a disconnected or failed MCP server.
+    pub async fn reconnect_mcp_server(&self, server_name: &str) -> Result<()> {
+        self.send_control_request(
+            json!({ "subtype": "mcp_reconnect", "serverName": server_name }),
+            Duration::from_secs(60),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Enables or disables an MCP server.
+    pub async fn toggle_mcp_server(&self, server_name: &str, enabled: bool) -> Result<()> {
+        self.send_control_request(
+            json!({ "subtype": "mcp_toggle", "serverName": server_name, "enabled": enabled }),
+            Duration::from_secs(60),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Stops a running task.
+    pub async fn stop_task(&self, task_id: &str) -> Result<()> {
+        self.send_control_request(
+            json!({ "subtype": "stop_task", "task_id": task_id }),
             Duration::from_secs(60),
         )
         .await?;

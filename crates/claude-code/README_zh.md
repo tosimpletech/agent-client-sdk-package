@@ -37,7 +37,7 @@
 
 ## 状态
 
-- 版本：`0.1.44`（`claude-code-client-sdk`）
+- 版本：`0.1.46`（`claude-code-client-sdk`）
 - 范围：覆盖 Python SDK 核心工作流的对齐实现
 - 验证：包含对齐测试与 subprocess/e2e 风格测试
 - 文档：公开 API 已通过 `claude_code` 导出并附带文档
@@ -169,6 +169,10 @@ client.disconnect().await?;
   - `ClaudeSdkClient::interrupt`
   - `ClaudeSdkClient::disconnect`
   - 控制类方法：`set_permission_mode`、`set_model`、`rewind_files`、`get_mcp_status`、`get_server_info`
+  - 运行时 MCP/任务控制：`reconnect_mcp_server`、`toggle_mcp_server`、`stop_task`
+- 会话历史
+  - `list_sessions`
+  - `get_session_messages`
 - 传输层
   - `SubprocessCliTransport`
   - `Transport` trait 及 split 辅助
