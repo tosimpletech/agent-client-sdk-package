@@ -107,7 +107,9 @@ fn context_usage_from_token_usage(
 ) -> ContextUsage {
     let (window_tokens, source) = if limit > 0 {
         (Some(limit), ContextUsageSource::ProviderReported)
-    } else if let Some(override_tokens) = context_window_override_tokens {
+    } else if let Some(override_tokens) =
+        context_window_override_tokens.filter(|override_tokens| *override_tokens > 0)
+    {
         (Some(override_tokens), ContextUsageSource::ConfigOverride)
     } else {
         (None, ContextUsageSource::Unknown)
@@ -424,6 +426,27 @@ mod tests {
                     && usage.window_tokens == Some(120)
                     && usage.remaining_tokens == Some(90)
                     && usage.source == ContextUsageSource::ConfigOverride
+        )));
+    }
+
+    #[test]
+    fn zero_context_window_override_is_treated_as_unknown() {
+        let events = from_normalized_log_with_context_override(
+            NormalizedLog::TokenUsage {
+                total: 30,
+                limit: 0,
+            },
+            Some(0),
+        );
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentEvent::ContextUsageUpdated { usage }
+                if usage.used_tokens == 30
+                    && usage.window_tokens.is_none()
+                    && usage.remaining_tokens.is_none()
+                    && usage.utilization.is_none()
+                    && usage.source == ContextUsageSource::Unknown
         )));
     }
 }
