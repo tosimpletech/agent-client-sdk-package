@@ -110,13 +110,19 @@ impl ClaudeCodeExecutor {
         Ok(())
     }
 
-    fn to_agent_session(&self, session_id: String, working_dir: &Path) -> AgentSession {
+    fn to_agent_session(
+        &self,
+        session_id: String,
+        working_dir: &Path,
+        context_window_override_tokens: Option<u32>,
+    ) -> AgentSession {
         AgentSession {
             session_id,
             executor_type: ExecutorType::ClaudeCode,
             working_dir: working_dir.to_path_buf(),
             created_at: Utc::now(),
             last_message_id: None,
+            context_window_override_tokens,
         }
     }
 }
@@ -160,7 +166,11 @@ impl AgentExecutor for ClaudeCodeExecutor {
         let session_id = extract_session_id(&messages).unwrap_or_else(unique_fallback_session_id);
 
         self.store_client(session_id.clone(), client).await?;
-        Ok(self.to_agent_session(session_id, working_dir))
+        Ok(self.to_agent_session(
+            session_id,
+            working_dir,
+            config.context_window_override_tokens,
+        ))
     }
 
     async fn resume(
@@ -207,7 +217,11 @@ impl AgentExecutor for ClaudeCodeExecutor {
 
         self.store_client(resumed_session_id.clone(), client)
             .await?;
-        Ok(self.to_agent_session(resumed_session_id, working_dir))
+        Ok(self.to_agent_session(
+            resumed_session_id,
+            working_dir,
+            config.context_window_override_tokens,
+        ))
     }
 
     fn capabilities(&self) -> AgentCapabilities {

@@ -59,6 +59,7 @@ impl CodexExecutor {
         thread: &Thread,
         working_dir: &Path,
         fallback_session_id: Option<&str>,
+        context_window_override_tokens: Option<u32>,
     ) -> Result<AgentSession> {
         let session_id = thread
             .id()
@@ -76,6 +77,7 @@ impl CodexExecutor {
             working_dir: working_dir.to_path_buf(),
             created_at: Utc::now(),
             last_message_id: None,
+            context_window_override_tokens,
         })
     }
 }
@@ -100,7 +102,12 @@ impl AgentExecutor for CodexExecutor {
             ExecutorError::execution_failed("failed to execute prompt in codex session", error)
         })?;
 
-        Self::wrap_thread(&thread, working_dir, None)
+        Self::wrap_thread(
+            &thread,
+            working_dir,
+            None,
+            config.context_window_override_tokens,
+        )
     }
 
     async fn resume(
@@ -129,7 +136,12 @@ impl AgentExecutor for CodexExecutor {
             )
         })?;
 
-        Self::wrap_thread(&thread, working_dir, Some(session_id))
+        Self::wrap_thread(
+            &thread,
+            working_dir,
+            Some(session_id),
+            config.context_window_override_tokens,
+        )
     }
 
     fn capabilities(&self) -> AgentCapabilities {

@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use crate::{
     event::AgentEvent,
     log::{ActionType, NormalizedLog},
-    types::ToolStatus,
+    types::{ContextUsage, ContextUsageSource, ToolStatus},
 };
 
 /// Converts normalized logs into SDK events.
@@ -62,6 +62,15 @@ pub fn normalized_log_to_event(log: NormalizedLog) -> Option<AgentEvent> {
 /// This powers session-level pipelines where a single normalized record can fan out
 /// to multiple events (for example, thinking start/completed).
 pub fn from_normalized_log(log: NormalizedLog) -> Vec<AgentEvent> {
+    from_normalized_log_with_context_override(log, None)
+}
+
+/// Convert one normalized log entry into one or more [`AgentEvent`] values, with
+/// an optional context window override used when source logs do not provide a limit.
+pub fn from_normalized_log_with_context_override(
+    log: NormalizedLog,
+    context_window_override_tokens: Option<u32>,
+) -> Vec<AgentEvent> {
     match log {
         NormalizedLog::Message { role, content } => {
             vec![AgentEvent::MessageReceived { role, content }]
@@ -76,15 +85,49 @@ pub fn from_normalized_log(log: NormalizedLog) -> Vec<AgentEvent> {
             AgentEvent::ThinkingStarted,
             AgentEvent::ThinkingCompleted { content },
         ],
-        NormalizedLog::TokenUsage { total, limit } => {
-            vec![AgentEvent::TokenUsageUpdated { total, limit }]
-        }
+        NormalizedLog::TokenUsage { total, limit } => vec![
+            AgentEvent::TokenUsageUpdated { total, limit },
+            AgentEvent::ContextUsageUpdated {
+                usage: context_usage_from_token_usage(total, limit, context_window_override_tokens),
+            },
+        ],
         NormalizedLog::Error {
             error_type,
             message,
         } => vec![AgentEvent::ErrorOccurred {
             error: format!("{error_type}: {message}"),
         }],
+    }
+}
+
+fn context_usage_from_token_usage(
+    total: u32,
+    limit: u32,
+    context_window_override_tokens: Option<u32>,
+) -> ContextUsage {
+    let (window_tokens, source) = if limit > 0 {
+        (Some(limit), ContextUsageSource::ProviderReported)
+    } else if let Some(override_tokens) = context_window_override_tokens {
+        (Some(override_tokens), ContextUsageSource::ConfigOverride)
+    } else {
+        (None, ContextUsageSource::Unknown)
+    };
+
+    let remaining_tokens = window_tokens.map(|window| window.saturating_sub(total));
+    let utilization = window_tokens.and_then(|window| {
+        if window == 0 {
+            None
+        } else {
+            Some((total as f32 / window as f32).clamp(0.0, 1.0))
+        }
+    });
+
+    ContextUsage {
+        used_tokens: total,
+        window_tokens,
+        remaining_tokens,
+        utilization,
+        source,
     }
 }
 
@@ -150,7 +193,7 @@ mod tests {
     use super::*;
     use crate::{
         log::{ActionType, NormalizedLog},
-        types::{Role, ToolStatus},
+        types::{ContextUsageSource, Role, ToolStatus},
     };
 
     #[test]
@@ -342,5 +385,45 @@ mod tests {
             fan_out.as_slice(),
             [AgentEvent::ErrorOccurred { error }] if error == "io: permission denied"
         ));
+    }
+
+    #[test]
+    fn token_usage_fans_out_context_usage_with_provider_limit() {
+        let events = from_normalized_log(NormalizedLog::TokenUsage {
+            total: 40,
+            limit: 100,
+        });
+
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::TokenUsageUpdated { total, limit } if *total == 40 && *limit == 100)));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentEvent::ContextUsageUpdated { usage }
+                if usage.used_tokens == 40
+                    && usage.window_tokens == Some(100)
+                    && usage.remaining_tokens == Some(60)
+                    && usage.source == ContextUsageSource::ProviderReported
+        )));
+    }
+
+    #[test]
+    fn token_usage_uses_context_window_override_when_limit_unknown() {
+        let events = from_normalized_log_with_context_override(
+            NormalizedLog::TokenUsage {
+                total: 30,
+                limit: 0,
+            },
+            Some(120),
+        );
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentEvent::ContextUsageUpdated { usage }
+                if usage.used_tokens == 30
+                    && usage.window_tokens == Some(120)
+                    && usage.remaining_tokens == Some(90)
+                    && usage.source == ContextUsageSource::ConfigOverride
+        )));
     }
 }

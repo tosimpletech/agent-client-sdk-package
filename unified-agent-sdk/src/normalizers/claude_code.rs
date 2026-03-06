@@ -311,7 +311,7 @@ fn extract_token_usage(usage: Option<&Value>) -> Option<(u32, u32)> {
 
     if let Some(total) = value_to_u64(Some(usage)) {
         let total = saturating_u64_to_u32(total);
-        return Some((total, total));
+        return Some((total, 0));
     }
 
     let object = usage.as_object()?;
@@ -322,7 +322,7 @@ fn extract_token_usage(usage: Option<&Value>) -> Option<(u32, u32)> {
         .saturating_add(value_to_u64(object.get("cache_read_input_tokens")).unwrap_or(0));
     let limit = value_to_u64(object.get("limit"))
         .or_else(|| value_to_u64(object.get("max_tokens")))
-        .unwrap_or(total);
+        .unwrap_or(0);
 
     if total == 0 && limit == 0 {
         None
@@ -411,8 +411,27 @@ mod tests {
         assert_eq!(fourth.len(), 1);
         assert!(matches!(
             &fourth[0],
-            NormalizedLog::TokenUsage { total, limit } if *total == 20 && *limit == 20
+            NormalizedLog::TokenUsage { total, limit } if *total == 20 && *limit == 0
         ));
+    }
+
+    #[test]
+    fn extracts_limit_when_explicitly_present() {
+        let usage = serde_json::json!({
+            "input_tokens": 4,
+            "output_tokens": 6,
+            "limit": 100
+        });
+
+        let parsed = extract_token_usage(Some(&usage));
+        assert_eq!(parsed, Some((10, 100)));
+    }
+
+    #[test]
+    fn numeric_usage_keeps_unknown_limit() {
+        let usage = serde_json::json!(42);
+        let parsed = extract_token_usage(Some(&usage));
+        assert_eq!(parsed, Some((42, 0)));
     }
 
     #[test]
