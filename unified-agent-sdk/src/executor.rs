@@ -38,6 +38,8 @@ pub struct SpawnConfig {
     pub permission_policy: Option<crate::types::PermissionPolicy>,
     /// Extra environment variables to forward to the executor process.
     pub env: Vec<(String, String)>,
+    /// Optional context window capacity override (tokens) used for unified context usage events.
+    pub context_window_override_tokens: Option<u32>,
 }
 
 /// Core executor trait
@@ -58,6 +60,7 @@ pub struct SpawnConfig {
 ///                 reasoning: Some("medium".to_string()),
 ///                 permission_policy: None,
 ///                 env: Vec::new(),
+///                 context_window_override_tokens: None,
 ///             },
 ///         )
 ///         .await?;

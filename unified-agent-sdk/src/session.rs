@@ -30,6 +30,8 @@ pub struct SessionMetadata {
     pub last_message_id: Option<String>,
     /// Session working directory.
     pub working_dir: PathBuf,
+    /// Optional context window capacity override passed at session creation.
+    pub context_window_override_tokens: Option<u32>,
 }
 
 /// Session resume information
@@ -53,6 +55,8 @@ pub struct AgentSession {
     pub created_at: DateTime<Utc>,
     /// Last known source message id, if available.
     pub last_message_id: Option<String>,
+    /// Optional context window capacity override for context usage normalization.
+    pub context_window_override_tokens: Option<u32>,
     // Internal process handle (implementation-specific)
 }
 
@@ -75,6 +79,7 @@ impl AgentSession {
     ///     working_dir: PathBuf::from("."),
     ///     created_at: chrono::Utc::now(),
     ///     last_message_id: None,
+    ///     context_window_override_tokens: None,
     /// };
     ///
     /// let raw_logs: RawLogStream = Box::pin(stream::iter(vec![
@@ -100,6 +105,7 @@ impl AgentSession {
             emitted_started: false,
             finished: false,
             saw_error: false,
+            context_window_override_tokens: self.context_window_override_tokens,
         };
 
         let stream = stream::unfold(state, |mut state| async move {
@@ -154,6 +160,7 @@ impl AgentSession {
             created_at: self.created_at,
             last_message_id: self.last_message_id.clone(),
             working_dir: self.working_dir.clone(),
+            context_window_override_tokens: self.context_window_override_tokens,
         }
     }
 
@@ -187,12 +194,16 @@ struct EventPipelineState {
     emitted_started: bool,
     finished: bool,
     saw_error: bool,
+    context_window_override_tokens: Option<u32>,
 }
 
 impl EventPipelineState {
     fn push_logs(&mut self, logs: Vec<crate::log::NormalizedLog>) {
         for log in logs {
-            for event in converter::from_normalized_log(log) {
+            for event in converter::from_normalized_log_with_context_override(
+                log,
+                self.context_window_override_tokens,
+            ) {
                 self.push_event(event);
             }
         }
@@ -216,7 +227,7 @@ mod tests {
     use crate::{
         event::EventType,
         log::{ActionType, NormalizedLog},
-        types::{Role, ToolStatus},
+        types::{ContextUsageSource, Role, ToolStatus},
     };
 
     struct TestNormalizer;
@@ -268,6 +279,7 @@ mod tests {
             working_dir: PathBuf::from("."),
             created_at: Utc::now(),
             last_message_id: None,
+            context_window_override_tokens: None,
         };
 
         let received_messages = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -315,6 +327,14 @@ mod tests {
         assert!(events.iter().any(
             |event| matches!(event, AgentEvent::ToolCallCompleted { tool, .. } if tool == "bash")
         ));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentEvent::ContextUsageUpdated { usage }
+                if usage.used_tokens == 10
+                    && usage.window_tokens == Some(100)
+                    && usage.remaining_tokens == Some(90)
+                    && usage.source == ContextUsageSource::ProviderReported
+        )));
         assert!(matches!(
             events.last(),
             Some(AgentEvent::SessionCompleted { exit_status }) if exit_status.success
@@ -332,6 +352,7 @@ mod tests {
             working_dir: PathBuf::from("."),
             created_at: Utc::now(),
             last_message_id: None,
+            context_window_override_tokens: None,
         };
 
         let raw_logs: RawLogStream = Box::pin(stream::iter(vec![b"error".to_vec()]));
@@ -347,5 +368,47 @@ mod tests {
             events.last(),
             Some(AgentEvent::SessionCompleted { exit_status }) if !exit_status.success
         ));
+    }
+
+    struct UnknownLimitNormalizer;
+
+    impl LogNormalizer for UnknownLimitNormalizer {
+        fn normalize(&mut self, _chunk: &[u8]) -> Vec<NormalizedLog> {
+            Vec::new()
+        }
+
+        fn flush(&mut self) -> Vec<NormalizedLog> {
+            vec![NormalizedLog::TokenUsage {
+                total: 15,
+                limit: 0,
+            }]
+        }
+    }
+
+    #[tokio::test]
+    async fn session_event_stream_applies_context_window_override() {
+        let session = AgentSession {
+            session_id: "session-3".to_string(),
+            executor_type: ExecutorType::Codex,
+            working_dir: PathBuf::from("."),
+            created_at: Utc::now(),
+            last_message_id: None,
+            context_window_override_tokens: Some(60),
+        };
+
+        let raw_logs: RawLogStream = Box::pin(stream::iter(Vec::<Vec<u8>>::new()));
+        let events = session
+            .event_stream(raw_logs, Box::new(UnknownLimitNormalizer), None)
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentEvent::ContextUsageUpdated { usage }
+                if usage.used_tokens == 15
+                    && usage.window_tokens == Some(60)
+                    && usage.remaining_tokens == Some(45)
+                    && usage.source == ContextUsageSource::ConfigOverride
+        )));
     }
 }
