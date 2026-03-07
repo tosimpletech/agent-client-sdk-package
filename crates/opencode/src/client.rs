@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -104,7 +105,7 @@ impl SseEvent {
 pub type SseStream = Pin<Box<dyn Stream<Item = Result<SseEvent>> + Send>>;
 
 /// Config for creating OpenCode HTTP client.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OpencodeClientConfig {
     /// Base URL for API requests. Defaults to `http://127.0.0.1:4096`.
     pub base_url: String,
@@ -116,6 +117,21 @@ pub struct OpencodeClientConfig {
     pub bearer_token: Option<String>,
     /// Request timeout.
     pub timeout: Duration,
+}
+
+impl fmt::Debug for OpencodeClientConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OpencodeClientConfig")
+            .field("base_url", &self.base_url)
+            .field("directory", &self.directory)
+            .field("headers", &"<redacted>")
+            .field(
+                "bearer_token",
+                &self.bearer_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("timeout", &self.timeout)
+            .finish()
+    }
 }
 
 impl Default for OpencodeClientConfig {
@@ -130,17 +146,33 @@ impl Default for OpencodeClientConfig {
     }
 }
 
-#[derive(Debug)]
 struct ClientInner {
     http: reqwest::Client,
     base_url: String,
     default_headers: HeaderMap,
 }
 
+impl fmt::Debug for ClientInner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ClientInner")
+            .field("base_url", &self.base_url)
+            .field("default_headers", &"<redacted>")
+            .finish()
+    }
+}
+
 /// OpenCode API client aligned with official JS SDK request semantics.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OpencodeClient {
     inner: Arc<ClientInner>,
+}
+
+impl fmt::Debug for OpencodeClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OpencodeClient")
+            .field("base_url", &self.inner.base_url)
+            .finish()
+    }
 }
 
 /// Create OpenCode HTTP client.
@@ -155,7 +187,7 @@ pub fn create_opencode_client(config: Option<OpencodeClientConfig>) -> Result<Op
     }
 
     if let Some(directory) = &config.directory {
-        let encoded = encode_component(directory);
+        let encoded = encode_directory_header(directory);
         default_headers.insert(
             HeaderName::from_static("x-opencode-directory"),
             HeaderValue::from_str(&encoded)?,
@@ -404,21 +436,24 @@ impl OpencodeClient {
 
         let byte_stream = response.bytes_stream();
         let out = try_stream! {
-            let mut buffer = String::new();
+            let mut buffer = Vec::<u8>::new();
             let mut current = SseEvent::default();
 
             futures::pin_mut!(byte_stream);
             while let Some(chunk) = byte_stream.next().await {
                 let chunk = chunk?;
-                buffer.push_str(&String::from_utf8_lossy(&chunk));
+                buffer.extend_from_slice(&chunk);
 
-                while let Some(newline_idx) = buffer.find('\n') {
-                    let mut line = buffer[..newline_idx].to_string();
-                    buffer.drain(..=newline_idx);
-
-                    if line.ends_with('\r') {
+                while let Some(newline_idx) = buffer.iter().position(|b| *b == b'\n') {
+                    let mut line = buffer.drain(..=newline_idx).collect::<Vec<_>>();
+                    if matches!(line.last(), Some(b'\n')) {
                         line.pop();
                     }
+                    if matches!(line.last(), Some(b'\r')) {
+                        line.pop();
+                    }
+
+                    let line = String::from_utf8_lossy(&line).into_owned();
 
                     if line.is_empty() {
                         if !current.is_empty() {
@@ -428,31 +463,17 @@ impl OpencodeClient {
                         continue;
                     }
 
-                    if line.starts_with(':') {
-                        continue;
-                    }
+                    apply_sse_line(&line, &mut current);
+                }
+            }
 
-                    let (field, value) = match line.split_once(':') {
-                        Some((f, v)) => (f, v.trim_start()),
-                        None => (line.as_str(), ""),
-                    };
-
-                    match field {
-                        "event" => current.event = Some(value.to_string()),
-                        "id" => current.id = Some(value.to_string()),
-                        "retry" => {
-                            if let Ok(v) = value.parse::<u64>() {
-                                current.retry = Some(v);
-                            }
-                        }
-                        "data" => {
-                            if !current.data.is_empty() {
-                                current.data.push('\n');
-                            }
-                            current.data.push_str(value);
-                        }
-                        _ => {}
-                    }
+            if !buffer.is_empty() {
+                if matches!(buffer.last(), Some(b'\r')) {
+                    buffer.pop();
+                }
+                let line = String::from_utf8_lossy(&buffer).into_owned();
+                if !line.is_empty() {
+                    apply_sse_line(&line, &mut current);
                 }
             }
 
@@ -476,8 +497,11 @@ impl OpencodeClient {
 
         let mut merged_headers = self.inner.default_headers.clone();
         for (k, v) in &options.headers {
-            let name = HeaderName::from_bytes(k.as_bytes())
-                .map_err(|e| Error::OpencodeSDK(OpencodeSDKError::new(format!("Invalid header name {k}: {e}"))))?;
+            let name = HeaderName::from_bytes(k.as_bytes()).map_err(|e| {
+                Error::OpencodeSDK(OpencodeSDKError::new(format!(
+                    "Invalid header name {k}: {e}"
+                )))
+            })?;
             let value = HeaderValue::from_str(v)?;
             merged_headers.insert(name, value);
         }
@@ -601,127 +625,135 @@ impl SessionApi {
 
     pub async fn delete(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::DELETE, "/session/{id}", options)
+            .request_json(Method::DELETE, "/session/{sessionID}", options)
             .await
     }
 
     pub async fn get(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::GET, "/session/{id}", options)
+            .request_json(Method::GET, "/session/{sessionID}", options)
             .await
     }
 
     pub async fn update(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::PATCH, "/session/{id}", options)
+            .request_json(Method::PATCH, "/session/{sessionID}", options)
             .await
     }
 
     pub async fn children(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::GET, "/session/{id}/children", options)
+            .request_json(Method::GET, "/session/{sessionID}/children", options)
             .await
     }
 
     pub async fn todo(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::GET, "/session/{id}/todo", options)
+            .request_json(Method::GET, "/session/{sessionID}/todo", options)
             .await
     }
 
     pub async fn init(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::POST, "/session/{id}/init", options)
+            .request_json(Method::POST, "/session/{sessionID}/init", options)
             .await
     }
 
     pub async fn fork(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::POST, "/session/{id}/fork", options)
+            .request_json(Method::POST, "/session/{sessionID}/fork", options)
             .await
     }
 
     pub async fn abort(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::POST, "/session/{id}/abort", options)
+            .request_json(Method::POST, "/session/{sessionID}/abort", options)
             .await
     }
 
     pub async fn share(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::POST, "/session/{id}/share", options)
+            .request_json(Method::POST, "/session/{sessionID}/share", options)
             .await
     }
 
     pub async fn unshare(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::DELETE, "/session/{id}/share", options)
+            .request_json(Method::DELETE, "/session/{sessionID}/share", options)
             .await
     }
 
     pub async fn diff(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::GET, "/session/{id}/diff", options)
+            .request_json(Method::GET, "/session/{sessionID}/diff", options)
             .await
     }
 
     pub async fn summarize(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::POST, "/session/{id}/summarize", options)
+            .request_json(Method::POST, "/session/{sessionID}/summarize", options)
             .await
     }
 
     pub async fn messages(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::GET, "/session/{id}/message", options)
+            .request_json(Method::GET, "/session/{sessionID}/message", options)
             .await
     }
 
     pub async fn prompt(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::POST, "/session/{id}/message", options)
+            .request_json(Method::POST, "/session/{sessionID}/message", options)
             .await
     }
 
     pub async fn message(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::GET, "/session/{id}/message/{messageID}", options)
+            .request_json(
+                Method::GET,
+                "/session/{sessionID}/message/{messageID}",
+                options,
+            )
             .await
     }
 
     pub async fn prompt_async(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::POST, "/session/{id}/prompt_async", options)
+            .request_json(Method::POST, "/session/{sessionID}/prompt_async", options)
             .await
     }
 
     pub async fn command(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::POST, "/session/{id}/command", options)
+            .request_json(Method::POST, "/session/{sessionID}/command", options)
             .await
     }
 
     pub async fn shell(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::POST, "/session/{id}/shell", options)
+            .request_json(Method::POST, "/session/{sessionID}/shell", options)
             .await
     }
 
     pub async fn revert(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::POST, "/session/{id}/revert", options)
+            .request_json(Method::POST, "/session/{sessionID}/revert", options)
             .await
     }
 
     pub async fn unrevert(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::POST, "/session/{id}/unrevert", options)
+            .request_json(Method::POST, "/session/{sessionID}/unrevert", options)
             .await
     }
 
     pub async fn delete_message(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
-            .request_json(Method::DELETE, "/session/{id}/message/{messageID}", options)
+            .request_json(
+                Method::DELETE,
+                "/session/{sessionID}/message/{messageID}",
+                options,
+            )
             .await
     }
 
@@ -729,7 +761,7 @@ impl SessionApi {
         self.client
             .request_json(
                 Method::PATCH,
-                "/session/{id}/message/{messageID}/part/{partID}",
+                "/session/{sessionID}/message/{messageID}/part/{partID}",
                 options,
             )
             .await
@@ -739,7 +771,7 @@ impl SessionApi {
         self.client
             .request_json(
                 Method::DELETE,
-                "/session/{id}/message/{messageID}/part/{partID}",
+                "/session/{sessionID}/message/{messageID}/part/{partID}",
                 options,
             )
             .await
@@ -749,7 +781,7 @@ impl SessionApi {
         self.client
             .request_json(
                 Method::POST,
-                "/session/{id}/permissions/{permissionID}",
+                "/session/{sessionID}/permissions/{permissionID}",
                 options,
             )
             .await
@@ -1255,6 +1287,34 @@ impl TuiControlApi {
 /// Backward-compatible alias for top-level control API access.
 pub type ControlApi = TuiControlApi;
 
+fn apply_sse_line(line: &str, current: &mut SseEvent) {
+    if line.starts_with(':') {
+        return;
+    }
+
+    let (field, value) = match line.split_once(':') {
+        Some((f, v)) => (f, v.trim_start()),
+        None => (line, ""),
+    };
+
+    match field {
+        "event" => current.event = Some(value.to_string()),
+        "id" => current.id = Some(value.to_string()),
+        "retry" => {
+            if let Ok(v) = value.parse::<u64>() {
+                current.retry = Some(v);
+            }
+        }
+        "data" => {
+            if !current.data.is_empty() {
+                current.data.push('\n');
+            }
+            current.data.push_str(value);
+        }
+        _ => {}
+    }
+}
+
 fn parse_success_body(bytes: &[u8]) -> Value {
     match serde_json::from_slice::<Value>(bytes) {
         Ok(json) => json,
@@ -1275,6 +1335,14 @@ fn headers_to_map(headers: &HeaderMap) -> HashMap<String, String> {
 
 fn encode_component(value: &str) -> String {
     utf8_percent_encode(value, COMPONENT_ENCODE_SET).to_string()
+}
+
+fn encode_directory_header(value: &str) -> String {
+    if value.is_ascii() {
+        value.to_string()
+    } else {
+        encode_component(value)
+    }
 }
 
 fn resolve_path_value<'a>(

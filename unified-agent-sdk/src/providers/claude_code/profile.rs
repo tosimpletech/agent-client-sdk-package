@@ -48,6 +48,7 @@ pub async fn discover() -> DiscoveryData {
         crate::profile::parse_reasoning_output,
     )
     .await
+    .filter(|levels| !levels.is_empty())
     .unwrap_or_else(default_reasoning_levels);
 
     DiscoveryData {

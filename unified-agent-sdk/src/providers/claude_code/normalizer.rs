@@ -428,6 +428,18 @@ mod tests {
     }
 
     #[test]
+    fn extracts_max_tokens_when_limit_is_absent() {
+        let usage = serde_json::json!({
+            "input_tokens": 4,
+            "output_tokens": 6,
+            "max_tokens": 100
+        });
+
+        let parsed = extract_token_usage(Some(&usage));
+        assert_eq!(parsed, Some((10, 100)));
+    }
+
+    #[test]
     fn numeric_usage_keeps_unknown_limit() {
         let usage = serde_json::json!(42);
         let parsed = extract_token_usage(Some(&usage));

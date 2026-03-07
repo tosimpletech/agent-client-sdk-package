@@ -64,6 +64,47 @@ async fn spawn_single_response_server(response: String) -> (String, oneshot::Rec
     (format!("http://{}", addr), rx)
 }
 
+async fn spawn_chunked_response_server(
+    chunks: Vec<Vec<u8>>,
+) -> (String, oneshot::Receiver<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+
+    let (tx, rx) = oneshot::channel();
+
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.expect("accept");
+
+        let mut read_buf = Vec::new();
+        let mut temp = [0u8; 1024];
+
+        loop {
+            let n = socket.read(&mut temp).await.expect("read request");
+            if n == 0 {
+                break;
+            }
+            read_buf.extend_from_slice(&temp[..n]);
+
+            if read_buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+
+        let request_text = String::from_utf8_lossy(&read_buf).to_string();
+        let _ = tx.send(request_text);
+
+        for chunk in chunks {
+            socket
+                .write_all(&chunk)
+                .await
+                .expect("write response chunk");
+        }
+        socket.shutdown().await.expect("shutdown");
+    });
+
+    (format!("http://{}", addr), rx)
+}
+
 #[tokio::test]
 async fn session_prompt_posts_expected_path_and_body() {
     let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"id\":\"ok\"}";
@@ -134,6 +175,33 @@ async fn directory_header_is_percent_encoded() {
 }
 
 #[tokio::test]
+async fn ascii_directory_header_is_not_percent_encoded() {
+    let response =
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[]";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        directory: Some("/tmp/project".to_string()),
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let _ = client
+        .session()
+        .list(RequestOptions::default())
+        .await
+        .expect("list");
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request
+            .to_ascii_lowercase()
+            .contains("x-opencode-directory: /tmp/project")
+    );
+}
+
+#[tokio::test]
 async fn parses_sse_events_from_global_event() {
     let response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\nevent: ping\ndata: {\"ok\":true}\n\ndata: second\n\n";
     let (base_url, _request_rx) = spawn_single_response_server(response.to_string()).await;
@@ -166,6 +234,65 @@ async fn parses_sse_events_from_global_event() {
         .expect("second ok");
     assert_eq!(second.event, None);
     assert_eq!(second.data, "second");
+}
+
+#[tokio::test]
+async fn parses_sse_without_trailing_blank_line() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\nevent: ping\ndata: tail-without-terminator";
+    let (base_url, _request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        timeout: Duration::from_secs(5),
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let mut stream = client
+        .global()
+        .event(RequestOptions::default())
+        .await
+        .expect("global event stream");
+
+    let first = tokio::time::timeout(Duration::from_secs(2), stream.next())
+        .await
+        .expect("first timeout")
+        .expect("first event")
+        .expect("first ok");
+    assert_eq!(first.event.as_deref(), Some("ping"));
+    assert_eq!(first.data, "tail-without-terminator");
+}
+
+#[tokio::test]
+async fn parses_sse_utf8_when_multibyte_data_is_split_across_chunks() {
+    let chunks = vec![
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: "
+            .to_vec(),
+        vec![0xE4, 0xB8],
+        vec![0xAD, 0xE6, 0x96],
+        vec![0x87, b'\n', b'\n'],
+    ];
+    let (base_url, _request_rx) = spawn_chunked_response_server(chunks).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        timeout: Duration::from_secs(5),
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let mut stream = client
+        .global()
+        .event(RequestOptions::default())
+        .await
+        .expect("global event stream");
+
+    let first = tokio::time::timeout(Duration::from_secs(2), stream.next())
+        .await
+        .expect("first timeout")
+        .expect("first event")
+        .expect("first ok");
+    assert_eq!(first.data, "中文");
 }
 
 #[tokio::test]
@@ -370,6 +497,8 @@ async fn control_response_posts_expected_path() {
     );
     assert!(request.contains("\"value\":\"approve\""));
 }
+
+#[tokio::test]
 async fn missing_multi_param_path_field_returns_explicit_error() {
     let client = create_opencode_client(Some(OpencodeClientConfig {
         base_url: "http://127.0.0.1:1".to_string(),
@@ -379,11 +508,44 @@ async fn missing_multi_param_path_field_returns_explicit_error() {
 
     let err = client
         .session()
-        .message(RequestOptions::default().with_path("id", "ses_123"))
+        .message(RequestOptions::default().with_path("sessionID", "ses_123"))
         .await
         .expect_err("must fail with missing messageID");
 
     assert!(matches!(err, Error::MissingPathParameter(ref key) if key == "messageID"));
+}
+
+#[tokio::test]
+async fn session_message_uses_session_and_message_ids() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .session()
+        .message(
+            RequestOptions::default()
+                .with_path("sessionID", "ses_123")
+                .with_path("messageID", "msg_456"),
+        )
+        .await
+        .expect("session message");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["ok"], true);
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("GET /session/ses_123/message/msg_456 HTTP/1.1")
+            || request.contains("GET http://")
+                && request.contains("/session/ses_123/message/msg_456"),
+        "unexpected request line: {request}"
+    );
 }
 
 #[tokio::test]
