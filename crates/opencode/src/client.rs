@@ -298,6 +298,13 @@ impl OpencodeClient {
         }
     }
 
+    /// Backward-compatible shorthand for TUI control endpoints.
+    pub fn control(&self) -> ControlApi {
+        ControlApi {
+            client: self.clone(),
+        }
+    }
+
     /// Execute any OpenCode operation by official `operationId`.
     pub async fn call_operation(
         &self,
@@ -1226,6 +1233,9 @@ impl TuiControlApi {
             .await
     }
 }
+
+/// Backward-compatible alias for top-level control API access.
+pub type ControlApi = TuiControlApi;
 
 fn parse_success_body(bytes: &[u8]) -> Value {
     match serde_json::from_slice::<Value>(bytes) {

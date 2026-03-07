@@ -8,7 +8,7 @@ Rust SDK aligned with the official OpenCode JavaScript SDK (`@opencode-ai/sdk` `
 - Start/stop OpenCode TUI: `create_opencode_tui`
 - Create OpenCode HTTP client: `create_opencode_client`
 - One-shot helper: `create_opencode` (returns server + client)
-- Session/app/instance/global/project/provider/auth/oauth/event/lsp/pty/tui endpoint wrappers
+- Session/app/instance/global/project/provider/auth/oauth/event/lsp/pty/tui/control endpoint wrappers
 - Generic operation dispatcher by `operationId`: `call_operation` / `call_operation_sse`
 
 ## Installation

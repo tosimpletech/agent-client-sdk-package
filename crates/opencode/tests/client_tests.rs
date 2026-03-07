@@ -256,6 +256,7 @@ async fn tui_submit_prompt_posts_expected_path_and_body() {
 #[tokio::test]
 async fn path_get_requests_expected_path() {
     let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"cwd\":\"/tmp\"}";
+
     let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
 
     let client = create_opencode_client(Some(OpencodeClientConfig {
@@ -279,6 +280,63 @@ async fn path_get_requests_expected_path() {
             || request.contains("GET http://") && request.contains("/path "),
         "unexpected request line: {request}"
     );
+}
+
+#[tokio::test]
+async fn control_next_requests_expected_path() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .control()
+        .next(RequestOptions::default())
+        .await
+        .expect("control next");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["ok"], true);
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("GET /tui/control/next HTTP/1.1")
+            || request.contains("GET http://") && request.contains("/tui/control/next "),
+        "unexpected request line: {request}"
+    );
+}
+
+#[tokio::test]
+async fn control_response_posts_expected_path() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .control()
+        .response(RequestOptions::default().with_body(json!({"value":"approve"})))
+        .await
+        .expect("control response");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["ok"], true);
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("POST /tui/control/response HTTP/1.1")
+            || request.contains("POST http://") && request.contains("/tui/control/response"),
+        "unexpected request line: {request}"
+    );
+    assert!(request.contains("\"value\":\"approve\""));
 }
 
 #[tokio::test]
