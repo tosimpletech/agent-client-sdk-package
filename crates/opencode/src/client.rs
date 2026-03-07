@@ -238,6 +238,12 @@ impl OpencodeClient {
         }
     }
 
+    pub fn pty(&self) -> PtyApi {
+        PtyApi {
+            client: self.clone(),
+        }
+    }
+
     pub fn event(&self) -> EventApi {
         EventApi {
             client: self.clone(),
@@ -949,6 +955,48 @@ impl McpAuthApi {
     pub async fn authenticate(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::POST, "/mcp/{name}/auth/authenticate", options)
+            .await
+    }
+}
+
+/// PTY endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct PtyApi {
+    client: OpencodeClient,
+}
+
+impl PtyApi {
+    pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.request_json(Method::GET, "/pty", options).await
+    }
+
+    pub async fn create(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::POST, "/pty", options)
+            .await
+    }
+
+    pub async fn remove(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::DELETE, "/pty/{ptyID}", options)
+            .await
+    }
+
+    pub async fn get(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::GET, "/pty/{ptyID}", options)
+            .await
+    }
+
+    pub async fn update(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::PUT, "/pty/{ptyID}", options)
+            .await
+    }
+
+    pub async fn connect(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::GET, "/pty/{ptyID}/connect", options)
             .await
     }
 }
