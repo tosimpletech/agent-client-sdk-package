@@ -1,4 +1,4 @@
-//! Codex adapter for unified executor abstraction.
+//! Codex adapter for the unified executor abstraction.
 
 use std::path::Path;
 
@@ -14,13 +14,30 @@ use crate::{
 };
 
 /// Adapter that maps [`codex::Codex`] to the unified [`AgentExecutor`] interface.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use unified_agent_sdk::{AgentExecutor, CodexExecutor, executor::SpawnConfig};
+///
+/// # async fn run() -> unified_agent_sdk::Result<()> {
+/// let executor = CodexExecutor::default();
+/// let cwd = std::env::current_dir()?;
+/// let _session = executor
+///     .spawn(&cwd, "List the top 3 refactor opportunities.", &SpawnConfig::default())
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct CodexExecutor {
     options: CodexOptions,
 }
 
 impl CodexExecutor {
-    /// Create a new executor with optional base Codex options.
+    /// Creates a new executor with optional base Codex client options.
+    ///
+    /// Values from [`SpawnConfig`] are merged at runtime for each session.
     pub fn new(options: Option<CodexOptions>) -> Self {
         Self {
             options: options.unwrap_or_default(),
@@ -59,6 +76,7 @@ impl CodexExecutor {
         thread: &Thread,
         working_dir: &Path,
         fallback_session_id: Option<&str>,
+        context_window_override_tokens: Option<u32>,
     ) -> Result<AgentSession> {
         let session_id = thread
             .id()
@@ -76,6 +94,7 @@ impl CodexExecutor {
             working_dir: working_dir.to_path_buf(),
             created_at: Utc::now(),
             last_message_id: None,
+            context_window_override_tokens,
         })
     }
 }
@@ -100,7 +119,12 @@ impl AgentExecutor for CodexExecutor {
             ExecutorError::execution_failed("failed to execute prompt in codex session", error)
         })?;
 
-        Self::wrap_thread(&thread, working_dir, None)
+        Self::wrap_thread(
+            &thread,
+            working_dir,
+            None,
+            config.context_window_override_tokens,
+        )
     }
 
     async fn resume(
@@ -129,7 +153,12 @@ impl AgentExecutor for CodexExecutor {
             )
         })?;
 
-        Self::wrap_thread(&thread, working_dir, Some(session_id))
+        Self::wrap_thread(
+            &thread,
+            working_dir,
+            Some(session_id),
+            config.context_window_override_tokens,
+        )
     }
 
     fn capabilities(&self) -> AgentCapabilities {

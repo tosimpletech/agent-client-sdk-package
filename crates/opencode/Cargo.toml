@@ -1,0 +1,27 @@
+[package]
+name = "opencode-client-sdk"
+version = "1.2.20"
+edition = "2024"
+rust-version = "1.85"
+description = "Rust SDK for integrating OpenCode via local server + OpenAPI HTTP client"
+license = "Apache-2.0"
+repository = "https://github.com/tosimpletech/agent-client-sdk-package"
+keywords = ["opencode", "agent", "sdk"]
+categories = ["api-bindings", "asynchronous"]
+
+[lib]
+name = "opencode"
+
+[dependencies]
+async-stream = "0.3"
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+which = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+percent-encoding = "2"
+
+[dev-dependencies]
+tempfile = "3"

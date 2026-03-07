@@ -1,10 +1,11 @@
 # Unified Agent SDK
 
-Unified Rust SDK that provides one interface for multiple coding agents (currently Codex and Claude Code).
+Unified Rust SDK that provides one interface for multiple coding agents.
 
 ## Table of Contents
 
 - [Overview](#overview)
+- [Supported Providers](#supported-providers)
 - [Installation](#installation)
 - [Quickstart](#quickstart)
 - [API Overview](#api-overview)
@@ -16,11 +17,19 @@ Unified Rust SDK that provides one interface for multiple coding agents (current
 `unified-agent-sdk` offers:
 
 - A shared executor interface (`AgentExecutor`) across providers
-- Provider adapters (`CodexExecutor`, `ClaudeCodeExecutor`)
+- Provider-based architecture: each SDK encapsulates executor and normalizer in independent modules
 - Profile/config resolution (`ProfileManager`)
 - Unified event and log normalization pipeline (`AgentEvent`, `LogNormalizer`)
+- Context usage signaling with optional capacity/remaining metadata (`ContextUsageUpdated`)
 
 It is designed to keep integration code stable while switching agent backends.
+
+## Supported Providers
+
+| Provider | Executor | CLI Required |
+|----------|----------|--------------|
+| Codex | `CodexExecutor` | `codex` |
+| Claude Code | `ClaudeCodeExecutor` | `claude` |
 
 ## Installation
 
@@ -52,6 +61,7 @@ async fn main() -> Result<()> {
         reasoning: Some("medium".to_string()),
         permission_policy: Some(PermissionPolicy::Prompt),
         env: vec![],
+        context_window_override_tokens: None,
     };
 
     let working_dir = std::env::current_dir()?;
@@ -97,6 +107,7 @@ async fn main() -> Result<()> {
         reasoning: None,
         permission_policy: None,
         env: vec![],
+        context_window_override_tokens: None,
     };
 
     let working_dir = std::env::current_dir()?;

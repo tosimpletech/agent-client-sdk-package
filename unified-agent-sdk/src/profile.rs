@@ -1,4 +1,29 @@
-//! Profile and configuration management
+//! Profile and configuration management.
+//!
+//! Profiles are loaded from a JSON file (default: `~/.unified-agent/profiles.json`) and
+//! merged in this order:
+//!
+//! 1. `default` variant for the executor
+//! 2. requested variant overrides
+//! 3. runtime overrides from [`ExecutorConfig`]
+//! 4. runtime discovery fallback (model/reasoning only)
+//!
+//! Minimal example:
+//!
+//! ```json
+//! {
+//!   "codex": {
+//!     "default": {
+//!       "model": "gpt-5-codex",
+//!       "reasoning": "medium",
+//!       "permission_policy": "prompt"
+//!     },
+//!     "plan": {
+//!       "reasoning": "high"
+//!     }
+//!   }
+//! }
+//! ```
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -11,9 +36,6 @@ use tokio::process::Command;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
 
-use claude_code::{ClaudeAgentOptions, Prompt, SubprocessCliTransport};
-use codex::{CodexExec, ModelReasoningEffort};
-
 use crate::{
     error::{ExecutorError, Result},
     types::{ExecutorType, PermissionPolicy},
@@ -21,34 +43,6 @@ use crate::{
 
 const DISCOVERY_TTL: Duration = Duration::from_secs(5 * 60);
 const DISCOVERY_COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
-
-const CODEX_MODEL_DISCOVERY_COMMANDS: &[&[&str]] = &[
-    &["models", "list", "--json"],
-    &["models", "--json"],
-    &["model", "list", "--json"],
-    &["models", "list"],
-];
-
-const CODEX_REASONING_DISCOVERY_COMMANDS: &[&[&str]] = &[
-    &["reasoning", "list", "--json"],
-    &["reasoning", "--json"],
-    &["models", "reasoning", "--json"],
-    &["reasoning", "list"],
-];
-
-const CLAUDE_MODEL_DISCOVERY_COMMANDS: &[&[&str]] = &[
-    &["models", "list", "--json"],
-    &["models", "--json"],
-    &["model", "list", "--json"],
-    &["models", "list"],
-];
-
-const CLAUDE_REASONING_DISCOVERY_COMMANDS: &[&[&str]] = &[
-    &["effort", "list", "--json"],
-    &["reasoning", "list", "--json"],
-    &["models", "reasoning", "--json"],
-    &["effort", "list"],
-];
 
 /// Profile identifier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -105,7 +99,7 @@ struct CachedDiscovery {
     expires_at: Instant,
 }
 
-/// Profile manager
+/// Profile manager for loading, resolving, and discovering executor configuration.
 pub struct ProfileManager {
     config_path: PathBuf,
     cache: RwLock<ProfileCache>,
@@ -285,8 +279,8 @@ impl ProfileManager {
 
     async fn discover_fresh(&self, executor: ExecutorType) -> DiscoveryData {
         match executor {
-            ExecutorType::Codex => discover_codex().await,
-            ExecutorType::ClaudeCode => discover_claude_code().await,
+            ExecutorType::Codex => crate::providers::codex::profile::discover().await,
+            ExecutorType::ClaudeCode => crate::providers::claude_code::profile::discover().await,
         }
     }
 }
@@ -426,115 +420,11 @@ fn normalize_variant_key(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
-async fn discover_codex() -> DiscoveryData {
-    let fallback = fallback_discovery(ExecutorType::Codex);
-    let codex_program = match CodexExec::new(None, None, None) {
-        Ok(exec) => exec.executable_path().to_string(),
-        Err(_) => return fallback,
-    };
-
-    let models = discover_from_commands(
-        &codex_program,
-        CODEX_MODEL_DISCOVERY_COMMANDS,
-        parse_models_output,
-    )
-    .await
-    .unwrap_or_default();
-
-    let reasoning_levels = discover_from_commands(
-        &codex_program,
-        CODEX_REASONING_DISCOVERY_COMMANDS,
-        parse_reasoning_output,
-    )
-    .await
-    .unwrap_or_else(codex_reasoning_levels);
-
-    DiscoveryData {
-        models,
-        reasoning_levels,
-    }
-}
-
-async fn discover_claude_code() -> DiscoveryData {
-    let fallback = fallback_discovery(ExecutorType::ClaudeCode);
-    let claude_program = match resolve_claude_cli_path() {
-        Some(path) => path,
-        None => return fallback,
-    };
-
-    let models = discover_from_commands(
-        &claude_program,
-        CLAUDE_MODEL_DISCOVERY_COMMANDS,
-        parse_models_output,
-    )
-    .await
-    .unwrap_or_default();
-
-    let reasoning_levels = discover_from_commands(
-        &claude_program,
-        CLAUDE_REASONING_DISCOVERY_COMMANDS,
-        parse_reasoning_output,
-    )
-    .await
-    .unwrap_or_else(claude_reasoning_levels);
-
-    DiscoveryData {
-        models,
-        reasoning_levels,
-    }
-}
-
-fn fallback_discovery(executor: ExecutorType) -> DiscoveryData {
-    match executor {
-        ExecutorType::Codex => DiscoveryData {
-            models: Vec::new(),
-            reasoning_levels: codex_reasoning_levels(),
-        },
-        ExecutorType::ClaudeCode => DiscoveryData {
-            models: Vec::new(),
-            reasoning_levels: claude_reasoning_levels(),
-        },
-    }
-}
-
-fn resolve_claude_cli_path() -> Option<String> {
-    SubprocessCliTransport::new(Prompt::Messages, ClaudeAgentOptions::default())
-        .ok()
-        .map(|transport| transport.cli_path.clone())
-}
-
-fn codex_reasoning_levels() -> Vec<String> {
-    [
-        ModelReasoningEffort::Minimal,
-        ModelReasoningEffort::Low,
-        ModelReasoningEffort::Medium,
-        ModelReasoningEffort::High,
-        ModelReasoningEffort::XHigh,
-    ]
-    .into_iter()
-    .map(model_reasoning_effort_to_string)
-    .collect()
-}
-
-fn model_reasoning_effort_to_string(level: ModelReasoningEffort) -> String {
-    let value = match level {
-        ModelReasoningEffort::Minimal => "minimal",
-        ModelReasoningEffort::Low => "low",
-        ModelReasoningEffort::Medium => "medium",
-        ModelReasoningEffort::High => "high",
-        ModelReasoningEffort::XHigh => "xhigh",
-    };
-    value.to_string()
-}
-
-fn claude_reasoning_levels() -> Vec<String> {
-    ["low", "medium", "high", "max"]
-        .into_iter()
-        .map(str::to_string)
-        .collect()
-}
-
-async fn discover_from_commands(
+/// Runs discovery commands in order and parses the first non-empty successful output.
+///
+/// This helper is best-effort: command failures, parse failures, and timeouts are
+/// ignored so probing can continue with fallback candidates.
+pub async fn discover_from_commands(
     program: &str,
     command_candidates: &[&[&str]],
     parse_output: fn(&str) -> Vec<String>,
@@ -579,7 +469,20 @@ async fn run_discovery_command(program: &str, args: &[&str]) -> Option<String> {
     Some(stdout)
 }
 
-fn parse_models_output(output: &str) -> Vec<String> {
+/// Parses model identifiers from CLI output.
+///
+/// Supports both JSON and plain-text command output, then deduplicates values while
+/// preserving first-seen order.
+///
+/// # Examples
+///
+/// ```rust
+/// use unified_agent_sdk::profile::parse_models_output;
+///
+/// let json = r#"{"models":[{"id":"gpt-5-codex"},{"id":"gpt-5"}]}"#;
+/// assert_eq!(parse_models_output(json), vec!["gpt-5-codex", "gpt-5"]);
+/// ```
+pub fn parse_models_output(output: &str) -> Vec<String> {
     let mut models = parse_json_list(
         output,
         &[
@@ -602,7 +505,20 @@ fn parse_models_output(output: &str) -> Vec<String> {
         .collect()
 }
 
-fn parse_reasoning_output(output: &str) -> Vec<String> {
+/// Parses reasoning/effort levels from CLI output.
+///
+/// Accepts JSON and plain-text output and normalizes known variants (for example
+/// `x-high` -> `xhigh`) before deduplication.
+///
+/// # Examples
+///
+/// ```rust
+/// use unified_agent_sdk::profile::parse_reasoning_output;
+///
+/// let text = "low\nmedium\nx-high\n";
+/// assert_eq!(parse_reasoning_output(text), vec!["low", "medium", "xhigh"]);
+/// ```
+pub fn parse_reasoning_output(output: &str) -> Vec<String> {
     let mut values = parse_json_list(
         output,
         &[
@@ -692,8 +608,33 @@ fn parse_plain_list(output: &str) -> Vec<String> {
                 return None;
             }
 
-            let cleaned = trimmed
-                .trim_start_matches(['-', '*', '|'])
+            let mut candidate = trimmed.trim_start_matches(['-', '*', '|']).trim();
+            if let Some((prefix, suffix)) = candidate.split_once(':') {
+                let prefix = prefix.trim();
+                let suffix = suffix.trim();
+                let lower = prefix.to_ascii_lowercase();
+                let label_like = prefix.contains(' ')
+                    || matches!(
+                        lower.as_str(),
+                        "model"
+                            | "models"
+                            | "reasoning"
+                            | "reasoning levels"
+                            | "effort"
+                            | "efforts"
+                            | "available"
+                            | "available models"
+                            | "available reasoning levels"
+                    );
+                if label_like {
+                    if suffix.is_empty() {
+                        return None;
+                    }
+                    candidate = suffix;
+                }
+            }
+
+            let cleaned = candidate
                 .split_whitespace()
                 .next()?
                 .trim_matches(['|', ',', ';']);
@@ -732,7 +673,10 @@ fn looks_like_model_name(value: &str) -> bool {
     }
 
     let lower = normalized.to_ascii_lowercase();
-    if matches!(lower.as_str(), "model" | "models" | "name" | "id") {
+    if matches!(
+        lower.as_str(),
+        "model" | "models" | "name" | "id" | "available"
+    ) {
         return false;
     }
 
@@ -780,7 +724,10 @@ fn preferred_reasoning_level(levels: &[String]) -> Option<String> {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{Duration, UNIX_EPOCH};
+
+    static TEST_CONFIG_SEQ: AtomicU64 = AtomicU64::new(0);
 
     struct TestConfigFile {
         path: PathBuf,
@@ -788,13 +735,15 @@ mod tests {
 
     impl TestConfigFile {
         fn new() -> Self {
+            let seq = TEST_CONFIG_SEQ.fetch_add(1, Ordering::Relaxed);
             let base = std::env::temp_dir().join(format!(
-                "unified-agent-sdk-profile-test-{}-{}",
+                "unified-agent-sdk-profile-test-{}-{}-{}",
                 std::process::id(),
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .expect("clock should be monotonic")
-                    .as_nanos()
+                    .as_nanos(),
+                seq
             ));
             fs::create_dir_all(&base).expect("temp test dir should be created");
             Self {
@@ -939,5 +888,29 @@ mod tests {
             .await
             .expect("reload after file update should work");
         assert_eq!(second.model.as_deref(), Some("gpt-5"));
+    }
+
+    #[test]
+    fn parse_models_output_skips_plain_text_headers() {
+        let parsed = parse_models_output(
+            r#"
+Available models:
+- claude-sonnet-4-5
+- claude-haiku-4-5
+"#,
+        );
+        assert_eq!(
+            parsed,
+            vec![
+                "claude-sonnet-4-5".to_string(),
+                "claude-haiku-4-5".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_models_output_accepts_inline_label_format() {
+        let parsed = parse_models_output("Available models: claude-sonnet-4-5");
+        assert_eq!(parsed, vec!["claude-sonnet-4-5".to_string()]);
     }
 }

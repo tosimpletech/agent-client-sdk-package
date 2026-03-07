@@ -8,7 +8,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
-use crate::types::{ExitStatus, Role};
+use crate::types::{ContextUsage, ExitStatus, Role};
 
 pub mod converter;
 
@@ -64,6 +64,11 @@ pub enum AgentEvent {
         /// Token limit (if provided by source stream; can be `0` when unknown).
         limit: u32,
     },
+    /// Context window usage update.
+    ContextUsageUpdated {
+        /// Unified context usage snapshot.
+        usage: ContextUsage,
+    },
     /// Error event propagated through the session event stream.
     ErrorOccurred {
         /// Error message.
@@ -95,6 +100,8 @@ pub enum EventType {
     ThinkingCompleted,
     /// Filter for [`AgentEvent::TokenUsageUpdated`].
     TokenUsageUpdated,
+    /// Filter for [`AgentEvent::ContextUsageUpdated`].
+    ContextUsageUpdated,
     /// Filter for [`AgentEvent::ErrorOccurred`].
     ErrorOccurred,
     /// Filter for [`AgentEvent::SessionCompleted`].
@@ -113,6 +120,7 @@ impl AgentEvent {
             AgentEvent::ThinkingStarted => EventType::ThinkingStarted,
             AgentEvent::ThinkingCompleted { .. } => EventType::ThinkingCompleted,
             AgentEvent::TokenUsageUpdated { .. } => EventType::TokenUsageUpdated,
+            AgentEvent::ContextUsageUpdated { .. } => EventType::ContextUsageUpdated,
             AgentEvent::ErrorOccurred { .. } => EventType::ErrorOccurred,
             AgentEvent::SessionCompleted { .. } => EventType::SessionCompleted,
         }
