@@ -477,7 +477,7 @@ impl OpencodeClient {
         let mut merged_headers = self.inner.default_headers.clone();
         for (k, v) in &options.headers {
             let name = HeaderName::from_bytes(k.as_bytes())
-                .map_err(|e| Error::Other(format!("Invalid header name {k}: {e}")))?;
+                .map_err(|e| Error::OpencodeSDK(OpencodeSDKError::new(format!("Invalid header name {k}: {e}"))))?;
             let value = HeaderValue::from_str(v)?;
             merged_headers.insert(name, value);
         }
