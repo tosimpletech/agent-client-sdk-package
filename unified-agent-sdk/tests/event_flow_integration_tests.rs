@@ -1,4 +1,3 @@
-use chrono::Utc;
 use futures::{StreamExt, stream};
 use std::path::PathBuf;
 use unified_agent_sdk::{
@@ -7,14 +6,12 @@ use unified_agent_sdk::{
 };
 
 fn test_session(session_id: &str, executor_type: ExecutorType) -> AgentSession {
-    AgentSession {
-        session_id: session_id.to_string(),
+    AgentSession::new(
+        session_id.to_string(),
         executor_type,
-        working_dir: PathBuf::from("."),
-        created_at: Utc::now(),
-        last_message_id: None,
-        context_window_override_tokens: None,
-    }
+        PathBuf::from("."),
+        None,
+    )
 }
 
 #[tokio::test]

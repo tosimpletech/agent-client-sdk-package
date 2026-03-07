@@ -7,10 +7,10 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures::{Stream, StreamExt, stream};
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::Arc;
 
 use crate::{
     error::Result,
@@ -65,10 +65,60 @@ pub struct AgentSession {
     pub last_message_id: Option<String>,
     /// Optional context window capacity override for context usage normalization.
     pub context_window_override_tokens: Option<u32>,
-    // Lifecycle control is resolved by session id via an internal registry.
+    lifecycle_controller: SessionControllerRef,
 }
 
 impl AgentSession {
+    /// Creates a detached session handle with default lifecycle behavior.
+    ///
+    /// Detached sessions treat `wait` as immediately successful and `cancel` as
+    /// a no-op.
+    pub fn new(
+        session_id: impl Into<String>,
+        executor_type: ExecutorType,
+        working_dir: impl Into<PathBuf>,
+        context_window_override_tokens: Option<u32>,
+    ) -> Self {
+        Self::from_parts(
+            SessionMetadata {
+                session_id: session_id.into(),
+                executor_type,
+                created_at: Utc::now(),
+                last_message_id: None,
+                working_dir: working_dir.into(),
+                context_window_override_tokens,
+            },
+            Arc::new(DetachedSessionLifecycleController),
+        )
+    }
+
+    /// Restores a detached session from persisted metadata.
+    pub fn from_metadata(metadata: SessionMetadata) -> Self {
+        Self::from_parts(metadata, Arc::new(DetachedSessionLifecycleController))
+    }
+
+    pub(crate) fn from_metadata_with_exit_status(
+        metadata: SessionMetadata,
+        exit_status: ExitStatus,
+    ) -> Self {
+        Self::from_parts(
+            metadata,
+            Arc::new(CompletedSessionLifecycleController { exit_status }),
+        )
+    }
+
+    fn from_parts(metadata: SessionMetadata, lifecycle_controller: SessionControllerRef) -> Self {
+        Self {
+            session_id: metadata.session_id,
+            executor_type: metadata.executor_type,
+            working_dir: metadata.working_dir,
+            created_at: metadata.created_at,
+            last_message_id: metadata.last_message_id,
+            context_window_override_tokens: metadata.context_window_override_tokens,
+            lifecycle_controller,
+        }
+    }
+
     /// Build an event stream pipeline:
     /// raw logs -> normalized logs -> unified events.
     ///
@@ -81,14 +131,7 @@ impl AgentSession {
     /// use std::path::PathBuf;
     /// use unified_agent_sdk::{AgentSession, CodexLogNormalizer, ExecutorType, session::RawLogStream};
     ///
-    /// let session = AgentSession {
-    ///     session_id: "s1".to_string(),
-    ///     executor_type: ExecutorType::Codex,
-    ///     working_dir: PathBuf::from("."),
-    ///     created_at: chrono::Utc::now(),
-    ///     last_message_id: None,
-    ///     context_window_override_tokens: None,
-    /// };
+    /// let session = AgentSession::new("s1", ExecutorType::Codex, PathBuf::from("."), None);
     ///
     /// let raw_logs: RawLogStream = Box::pin(stream::iter(vec![
     ///     br#"{"type":"item.completed","item":{"type":"agent_message","id":"m1","text":"hello"}}"#
@@ -173,31 +216,13 @@ impl AgentSession {
     }
 
     /// Waits for session completion and returns a summarized exit status.
-    ///
-    /// When no lifecycle controller is registered for this session id, the session
-    /// is treated as already completed successfully.
     pub async fn wait(&mut self) -> Result<ExitStatus> {
-        let Some(controller) = lookup_lifecycle_controller(&self.session_id) else {
-            return Ok(ExitStatus {
-                code: None,
-                success: true,
-            });
-        };
-
-        let result = controller.wait().await;
-        unregister_lifecycle_controller(&self.session_id);
-        result
+        self.lifecycle_controller.wait().await
     }
 
     /// Requests cancellation of the active session.
-    ///
-    /// Cancellation is a no-op when no lifecycle controller is registered.
     pub async fn cancel(&mut self) -> Result<()> {
-        let Some(controller) = lookup_lifecycle_controller(&self.session_id) else {
-            return Ok(());
-        };
-
-        controller.cancel().await
+        self.lifecycle_controller.cancel().await
     }
 }
 
@@ -205,6 +230,22 @@ impl AgentSession {
 pub(crate) trait SessionLifecycleController: Send + Sync {
     async fn wait(&self) -> Result<ExitStatus>;
     async fn cancel(&self) -> Result<()>;
+}
+
+struct DetachedSessionLifecycleController;
+
+#[async_trait]
+impl SessionLifecycleController for DetachedSessionLifecycleController {
+    async fn wait(&self) -> Result<ExitStatus> {
+        Ok(ExitStatus {
+            code: None,
+            success: true,
+        })
+    }
+
+    async fn cancel(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 struct CompletedSessionLifecycleController {
@@ -223,44 +264,6 @@ impl SessionLifecycleController for CompletedSessionLifecycleController {
 }
 
 type SessionControllerRef = Arc<dyn SessionLifecycleController>;
-
-type SessionControllerMap = HashMap<String, SessionControllerRef>;
-
-fn lifecycle_controllers() -> &'static RwLock<SessionControllerMap> {
-    static CONTROLLERS: OnceLock<RwLock<SessionControllerMap>> = OnceLock::new();
-    CONTROLLERS.get_or_init(|| RwLock::new(HashMap::new()))
-}
-
-pub(crate) fn register_lifecycle_controller(
-    session_id: impl Into<String>,
-    controller: SessionControllerRef,
-) {
-    let mut controllers = lifecycle_controllers()
-        .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    controllers.insert(session_id.into(), controller);
-}
-
-pub(crate) fn register_completed_session(session_id: impl Into<String>, exit_status: ExitStatus) {
-    register_lifecycle_controller(
-        session_id.into(),
-        Arc::new(CompletedSessionLifecycleController { exit_status }),
-    );
-}
-
-fn lookup_lifecycle_controller(session_id: &str) -> Option<SessionControllerRef> {
-    let controllers = lifecycle_controllers()
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    controllers.get(session_id).cloned()
-}
-
-fn unregister_lifecycle_controller(session_id: &str) {
-    let mut controllers = lifecycle_controllers()
-        .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    controllers.remove(session_id);
-}
 
 struct EventPipelineState {
     session_id: String,
@@ -352,14 +355,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_event_stream_builds_pipeline_and_triggers_hooks() {
-        let session = AgentSession {
-            session_id: "session-1".to_string(),
-            executor_type: ExecutorType::Codex,
-            working_dir: PathBuf::from("."),
-            created_at: Utc::now(),
-            last_message_id: None,
-            context_window_override_tokens: None,
-        };
+        let session = AgentSession::new("session-1", ExecutorType::Codex, PathBuf::from("."), None);
 
         let received_messages = Arc::new(Mutex::new(Vec::<String>::new()));
         let hooks = Arc::new(HookManager::new());
@@ -425,14 +421,12 @@ mod tests {
 
     #[tokio::test]
     async fn session_event_stream_marks_completion_as_failed_when_errors_seen() {
-        let session = AgentSession {
-            session_id: "session-2".to_string(),
-            executor_type: ExecutorType::ClaudeCode,
-            working_dir: PathBuf::from("."),
-            created_at: Utc::now(),
-            last_message_id: None,
-            context_window_override_tokens: None,
-        };
+        let session = AgentSession::new(
+            "session-2",
+            ExecutorType::ClaudeCode,
+            PathBuf::from("."),
+            None,
+        );
 
         let raw_logs: RawLogStream = Box::pin(stream::iter(vec![b"error".to_vec()]));
         let events = session
@@ -466,14 +460,12 @@ mod tests {
 
     #[tokio::test]
     async fn session_event_stream_applies_context_window_override() {
-        let session = AgentSession {
-            session_id: "session-3".to_string(),
-            executor_type: ExecutorType::Codex,
-            working_dir: PathBuf::from("."),
-            created_at: Utc::now(),
-            last_message_id: None,
-            context_window_override_tokens: Some(60),
-        };
+        let session = AgentSession::new(
+            "session-3",
+            ExecutorType::Codex,
+            PathBuf::from("."),
+            Some(60),
+        );
 
         let raw_logs: RawLogStream = Box::pin(stream::iter(Vec::<Vec<u8>>::new()));
         let events = session
@@ -493,14 +485,12 @@ mod tests {
 
     #[tokio::test]
     async fn wait_defaults_to_completed_success_when_unmanaged() {
-        let mut session = AgentSession {
-            session_id: "session-unmanaged".to_string(),
-            executor_type: ExecutorType::Codex,
-            working_dir: PathBuf::from("."),
-            created_at: Utc::now(),
-            last_message_id: None,
-            context_window_override_tokens: None,
-        };
+        let mut session = AgentSession::new(
+            "session-unmanaged",
+            ExecutorType::Codex,
+            PathBuf::from("."),
+            None,
+        );
 
         let exit_status = session.wait().await.expect("wait should succeed");
         assert_eq!(
@@ -513,18 +503,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wait_uses_registered_lifecycle_controller_and_unregisters_it() {
-        let mut session = AgentSession {
-            session_id: "session-managed".to_string(),
-            executor_type: ExecutorType::ClaudeCode,
-            working_dir: PathBuf::from("."),
-            created_at: Utc::now(),
-            last_message_id: None,
-            context_window_override_tokens: None,
-        };
-
-        register_completed_session(
-            session.session_id.clone(),
+    async fn wait_uses_session_lifecycle_controller() {
+        let mut session = AgentSession::from_metadata_with_exit_status(
+            SessionMetadata {
+                session_id: "session-managed".to_string(),
+                executor_type: ExecutorType::ClaudeCode,
+                created_at: Utc::now(),
+                last_message_id: None,
+                working_dir: PathBuf::from("."),
+                context_window_override_tokens: None,
+            },
             ExitStatus {
                 code: Some(17),
                 success: false,
@@ -540,13 +528,15 @@ mod tests {
             }
         );
 
-        // Controller should be removed after wait returns.
-        let second = session.wait().await.expect("second wait should fallback");
+        let second = session
+            .wait()
+            .await
+            .expect("second wait should remain stable");
         assert_eq!(
             second,
             ExitStatus {
-                code: None,
-                success: true
+                code: Some(17),
+                success: false
             }
         );
     }
@@ -572,18 +562,18 @@ mod tests {
 
     #[tokio::test]
     async fn cancel_delegates_to_registered_lifecycle_controller() {
-        let mut session = AgentSession {
-            session_id: "session-cancel".to_string(),
-            executor_type: ExecutorType::ClaudeCode,
-            working_dir: PathBuf::from("."),
-            created_at: Utc::now(),
-            last_message_id: None,
-            context_window_override_tokens: None,
-        };
+        let session_id = "session-cancel".to_string();
         let cancelled = Arc::new(AtomicBool::new(false));
 
-        register_lifecycle_controller(
-            session.session_id.clone(),
+        let mut session = AgentSession::from_parts(
+            SessionMetadata {
+                session_id,
+                executor_type: ExecutorType::ClaudeCode,
+                created_at: Utc::now(),
+                last_message_id: None,
+                working_dir: PathBuf::from("."),
+                context_window_override_tokens: None,
+            },
             Arc::new(CancelProbeController {
                 cancelled: Arc::clone(&cancelled),
             }),

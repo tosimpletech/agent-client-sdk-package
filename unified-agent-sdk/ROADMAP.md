@@ -116,7 +116,7 @@ Base SDKs
 
 ## Current Gap Assessment (2026-03-08)
 
-- `AgentSession::wait` and `AgentSession::cancel` now use lifecycle controllers (default behavior treats unmanaged sessions as completed; adapters register completed-session controllers).
+- `AgentSession::wait` and `AgentSession::cancel` now use per-session lifecycle controllers (instance-owned; no global registry).
 - Integration tests now exist at crate level (`unified-agent-sdk/tests`) and cover end-to-end event flow for Codex/Claude normalizers.
 - Performance optimization work is not tracked by explicit benchmarks/targets yet.
 - API docs are substantially present (public rustdoc + doctests), but release-grade checklist items are still pending.
