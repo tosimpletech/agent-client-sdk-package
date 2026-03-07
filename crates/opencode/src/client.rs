@@ -219,6 +219,13 @@ impl OpencodeClient {
             client: self.clone(),
         }
     }
+
+    pub fn mcp(&self) -> McpApi {
+        McpApi {
+            client: self.clone(),
+        }
+    }
+
     pub fn event(&self) -> EventApi {
         EventApi {
             client: self.clone(),
@@ -801,6 +808,75 @@ impl ToolApi {
             .await
     }
 }
+
+/// MCP endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct McpApi {
+    client: OpencodeClient,
+}
+
+impl McpApi {
+    pub async fn status(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.request_json(Method::GET, "/mcp", options).await
+    }
+
+    pub async fn add(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::POST, "/mcp", options)
+            .await
+    }
+
+    pub async fn connect(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::POST, "/mcp/{name}/connect", options)
+            .await
+    }
+
+    pub async fn disconnect(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::POST, "/mcp/{name}/disconnect", options)
+            .await
+    }
+
+    pub fn auth(&self) -> McpAuthApi {
+        McpAuthApi {
+            client: self.client.clone(),
+        }
+    }
+}
+
+/// MCP auth endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct McpAuthApi {
+    client: OpencodeClient,
+}
+
+impl McpAuthApi {
+    pub async fn remove(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::DELETE, "/mcp/{name}/auth", options)
+            .await
+    }
+
+    pub async fn start(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::POST, "/mcp/{name}/auth", options)
+            .await
+    }
+
+    pub async fn callback(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::POST, "/mcp/{name}/auth/callback", options)
+            .await
+    }
+
+    pub async fn authenticate(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::POST, "/mcp/{name}/auth/authenticate", options)
+            .await
+    }
+}
+
 /// Event endpoint namespace.
 #[derive(Debug, Clone)]
 pub struct EventApi {
