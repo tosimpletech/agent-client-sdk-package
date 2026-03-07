@@ -275,3 +275,36 @@ async fn provider_oauth_authorize_posts_expected_path() {
     );
     assert!(request.contains("\"code\":\"abc123\""));
 }
+
+#[tokio::test]
+async fn auth_set_puts_expected_path_and_body() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .auth()
+        .set(
+            RequestOptions::default()
+                .with_path("id", "openai")
+                .with_body(json!({ "api_key": "sk-test" })),
+        )
+        .await
+        .expect("auth set");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["ok"], true);
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("PUT /auth/openai HTTP/1.1")
+            || request.contains("PUT http://") && request.contains("/auth/openai"),
+        "unexpected request line: {request}"
+    );
+    assert!(request.contains("\"api_key\":\"sk-test\""));
+}

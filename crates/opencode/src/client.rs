@@ -232,6 +232,12 @@ impl OpencodeClient {
         }
     }
 
+    pub fn auth(&self) -> AuthApi {
+        AuthApi {
+            client: self.clone(),
+        }
+    }
+
     pub fn mcp(&self) -> McpApi {
         McpApi {
             client: self.clone(),
@@ -848,6 +854,22 @@ impl ToolApi {
         self.client
             .request_json(Method::GET, "/experimental/tool", options)
             .await
+    }
+}
+
+/// Auth endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct AuthApi {
+    client: OpencodeClient,
+}
+
+impl AuthApi {
+    pub async fn set(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("auth.set", options).await
+    }
+
+    pub async fn remove(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("auth.remove", options).await
     }
 }
 
