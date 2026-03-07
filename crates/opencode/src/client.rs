@@ -196,14 +196,38 @@ impl OpencodeClient {
         }
     }
 
+    pub fn config(&self) -> ConfigApi {
+        ConfigApi {
+            client: self.clone(),
+        }
+    }
+
     pub fn project(&self) -> ProjectApi {
         ProjectApi {
             client: self.clone(),
         }
     }
 
+    pub fn file(&self) -> FileApi {
+        FileApi {
+            client: self.clone(),
+        }
+    }
+
+    pub fn tool(&self) -> ToolApi {
+        ToolApi {
+            client: self.clone(),
+        }
+    }
+
     pub fn event(&self) -> EventApi {
         EventApi {
+            client: self.clone(),
+        }
+    }
+
+    pub fn find(&self) -> FindApi {
+        FindApi {
             client: self.clone(),
         }
     }
@@ -445,6 +469,32 @@ impl OpencodeClient {
     }
 }
 
+/// Find endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct FindApi {
+    client: OpencodeClient,
+}
+
+impl FindApi {
+    pub async fn text(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::GET, "/find", options)
+            .await
+    }
+
+    pub async fn files(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::GET, "/find/file", options)
+            .await
+    }
+
+    pub async fn symbols(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::GET, "/find/symbol", options)
+            .await
+    }
+}
+
 /// Session endpoint namespace.
 #[derive(Debug, Clone)]
 pub struct SessionApi {
@@ -665,6 +715,28 @@ impl GlobalApi {
     }
 }
 
+/// Config endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct ConfigApi {
+    client: OpencodeClient,
+}
+
+impl ConfigApi {
+    pub async fn get(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("config.get", options).await
+    }
+
+    pub async fn update(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("config.update", options).await
+    }
+
+    pub async fn providers(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("config.providers", options)
+            .await
+    }
+}
+
 /// Project endpoint namespace.
 #[derive(Debug, Clone)]
 pub struct ProjectApi {
@@ -687,6 +759,46 @@ impl ProjectApi {
     pub async fn update(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::PATCH, "/project/{projectID}", options)
+            .await
+    }
+}
+
+/// File endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct FileApi {
+    client: OpencodeClient,
+}
+
+impl FileApi {
+    pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::GET, "/file", options)
+            .await
+    }
+
+    pub async fn read(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::GET, "/file/content", options)
+            .await
+    }
+}
+
+/// Tool endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct ToolApi {
+    client: OpencodeClient,
+}
+
+impl ToolApi {
+    pub async fn ids(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::GET, "/experimental/tool/ids", options)
+            .await
+    }
+
+    pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::GET, "/experimental/tool", options)
             .await
     }
 }
