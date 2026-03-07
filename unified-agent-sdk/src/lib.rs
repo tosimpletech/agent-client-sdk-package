@@ -83,14 +83,12 @@
 //! };
 //!
 //! # async fn run() {
-//! let session = AgentSession {
-//!     session_id: "demo-session".to_string(),
-//!     executor_type: ExecutorType::Codex,
-//!     working_dir: PathBuf::from("."),
-//!     created_at: chrono::Utc::now(),
-//!     last_message_id: None,
-//!     context_window_override_tokens: None,
-//! };
+//! let session = AgentSession::new(
+//!     "demo-session",
+//!     ExecutorType::Codex,
+//!     PathBuf::from("."),
+//!     None,
+//! );
 //!
 //! let hooks = Arc::new(HookManager::new());
 //! hooks.register(
