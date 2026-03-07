@@ -116,9 +116,6 @@ pub enum Error {
     /// Missing required path parameter.
     #[error("Missing required path parameter: {0}")]
     MissingPathParameter(String),
-    /// Catch-all string error.
-    #[error("{0}")]
-    Other(String),
 }
 
 /// Specialized `Result` for OpenCode SDK.

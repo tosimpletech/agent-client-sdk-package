@@ -311,7 +311,7 @@ fn extract_token_usage(usage: Option<&Value>) -> Option<(u32, u32)> {
 
     if let Some(total) = value_to_u64(Some(usage)) {
         let total = saturating_u64_to_u32(total);
-        return Some((total, 0));
+        return (total > 0).then_some((total, 0));
     }
 
     let object = usage.as_object()?;
@@ -432,6 +432,13 @@ mod tests {
         let usage = serde_json::json!(42);
         let parsed = extract_token_usage(Some(&usage));
         assert_eq!(parsed, Some((42, 0)));
+    }
+
+    #[test]
+    fn numeric_zero_usage_is_suppressed() {
+        let usage = serde_json::json!(0);
+        let parsed = extract_token_usage(Some(&usage));
+        assert_eq!(parsed, None);
     }
 
     #[test]
