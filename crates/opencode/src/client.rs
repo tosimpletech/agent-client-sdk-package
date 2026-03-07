@@ -226,6 +226,12 @@ impl OpencodeClient {
         }
     }
 
+    pub fn provider(&self) -> ProviderApi {
+        ProviderApi {
+            client: self.clone(),
+        }
+    }
+
     pub fn mcp(&self) -> McpApi {
         McpApi {
             client: self.clone(),
@@ -829,6 +835,52 @@ impl ToolApi {
     pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::GET, "/experimental/tool", options)
+            .await
+    }
+}
+
+/// Provider endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct ProviderApi {
+    client: OpencodeClient,
+}
+
+impl ProviderApi {
+    pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::GET, "/provider", options)
+            .await
+    }
+
+    pub async fn auth(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::GET, "/provider/auth", options)
+            .await
+    }
+
+    pub fn oauth(&self) -> OauthApi {
+        OauthApi {
+            client: self.client.clone(),
+        }
+    }
+}
+
+/// OAuth endpoint namespace under provider routes.
+#[derive(Debug, Clone)]
+pub struct OauthApi {
+    client: OpencodeClient,
+}
+
+impl OauthApi {
+    pub async fn authorize(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::POST, "/provider/{id}/oauth/authorize", options)
+            .await
+    }
+
+    pub async fn callback(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::POST, "/provider/{id}/oauth/callback", options)
             .await
     }
 }

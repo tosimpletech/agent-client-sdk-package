@@ -212,3 +212,38 @@ async fn missing_multi_param_path_field_returns_explicit_error() {
 
     assert!(matches!(err, Error::MissingPathParameter(ref key) if key == "messageID"));
 }
+
+#[tokio::test]
+async fn provider_oauth_authorize_posts_expected_path() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .provider()
+        .oauth()
+        .authorize(
+            RequestOptions::default()
+                .with_path("id", "openai")
+                .with_body(json!({ "code": "abc123" })),
+        )
+        .await
+        .expect("oauth authorize");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["ok"], true);
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("POST /provider/openai/oauth/authorize HTTP/1.1")
+            || request.contains("POST http://")
+                && request.contains("/provider/openai/oauth/authorize"),
+        "unexpected request line: {request}"
+    );
+    assert!(request.contains("\"code\":\"abc123\""));
+}

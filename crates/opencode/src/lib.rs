@@ -12,8 +12,8 @@ pub mod server;
 pub mod types;
 
 pub use client::{
-    ApiResponse, EventApi, GlobalApi, LspApi, OpencodeClient, OpencodeClientConfig, ProjectApi,
-    RequestOptions, SessionApi, create_opencode_client,
+    ApiResponse, EventApi, GlobalApi, LspApi, OauthApi, OpencodeClient, OpencodeClientConfig,
+    ProjectApi, ProviderApi, RequestOptions, SessionApi, create_opencode_client,
 };
 pub use errors::{Error, Result};
 pub use server::{
