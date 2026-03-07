@@ -11,9 +11,6 @@ use tokio::process::Command;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
 
-use claude_code::{ClaudeAgentOptions, Prompt, SubprocessCliTransport};
-use codex::{CodexExec, ModelReasoningEffort};
-
 use crate::{
     error::{ExecutorError, Result},
     types::{ExecutorType, PermissionPolicy},
@@ -21,34 +18,6 @@ use crate::{
 
 const DISCOVERY_TTL: Duration = Duration::from_secs(5 * 60);
 const DISCOVERY_COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
-
-const CODEX_MODEL_DISCOVERY_COMMANDS: &[&[&str]] = &[
-    &["models", "list", "--json"],
-    &["models", "--json"],
-    &["model", "list", "--json"],
-    &["models", "list"],
-];
-
-const CODEX_REASONING_DISCOVERY_COMMANDS: &[&[&str]] = &[
-    &["reasoning", "list", "--json"],
-    &["reasoning", "--json"],
-    &["models", "reasoning", "--json"],
-    &["reasoning", "list"],
-];
-
-const CLAUDE_MODEL_DISCOVERY_COMMANDS: &[&[&str]] = &[
-    &["models", "list", "--json"],
-    &["models", "--json"],
-    &["model", "list", "--json"],
-    &["models", "list"],
-];
-
-const CLAUDE_REASONING_DISCOVERY_COMMANDS: &[&[&str]] = &[
-    &["effort", "list", "--json"],
-    &["reasoning", "list", "--json"],
-    &["models", "reasoning", "--json"],
-    &["effort", "list"],
-];
 
 /// Profile identifier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -285,8 +254,8 @@ impl ProfileManager {
 
     async fn discover_fresh(&self, executor: ExecutorType) -> DiscoveryData {
         match executor {
-            ExecutorType::Codex => discover_codex().await,
-            ExecutorType::ClaudeCode => discover_claude_code().await,
+            ExecutorType::Codex => crate::providers::codex::profile::discover().await,
+            ExecutorType::ClaudeCode => crate::providers::claude_code::profile::discover().await,
         }
     }
 }
@@ -426,115 +395,7 @@ fn normalize_variant_key(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
-async fn discover_codex() -> DiscoveryData {
-    let fallback = fallback_discovery(ExecutorType::Codex);
-    let codex_program = match CodexExec::new(None, None, None) {
-        Ok(exec) => exec.executable_path().to_string(),
-        Err(_) => return fallback,
-    };
-
-    let models = discover_from_commands(
-        &codex_program,
-        CODEX_MODEL_DISCOVERY_COMMANDS,
-        parse_models_output,
-    )
-    .await
-    .unwrap_or_default();
-
-    let reasoning_levels = discover_from_commands(
-        &codex_program,
-        CODEX_REASONING_DISCOVERY_COMMANDS,
-        parse_reasoning_output,
-    )
-    .await
-    .unwrap_or_else(codex_reasoning_levels);
-
-    DiscoveryData {
-        models,
-        reasoning_levels,
-    }
-}
-
-async fn discover_claude_code() -> DiscoveryData {
-    let fallback = fallback_discovery(ExecutorType::ClaudeCode);
-    let claude_program = match resolve_claude_cli_path() {
-        Some(path) => path,
-        None => return fallback,
-    };
-
-    let models = discover_from_commands(
-        &claude_program,
-        CLAUDE_MODEL_DISCOVERY_COMMANDS,
-        parse_models_output,
-    )
-    .await
-    .unwrap_or_default();
-
-    let reasoning_levels = discover_from_commands(
-        &claude_program,
-        CLAUDE_REASONING_DISCOVERY_COMMANDS,
-        parse_reasoning_output,
-    )
-    .await
-    .unwrap_or_else(claude_reasoning_levels);
-
-    DiscoveryData {
-        models,
-        reasoning_levels,
-    }
-}
-
-fn fallback_discovery(executor: ExecutorType) -> DiscoveryData {
-    match executor {
-        ExecutorType::Codex => DiscoveryData {
-            models: Vec::new(),
-            reasoning_levels: codex_reasoning_levels(),
-        },
-        ExecutorType::ClaudeCode => DiscoveryData {
-            models: Vec::new(),
-            reasoning_levels: claude_reasoning_levels(),
-        },
-    }
-}
-
-fn resolve_claude_cli_path() -> Option<String> {
-    SubprocessCliTransport::new(Prompt::Messages, ClaudeAgentOptions::default())
-        .ok()
-        .map(|transport| transport.cli_path.clone())
-}
-
-fn codex_reasoning_levels() -> Vec<String> {
-    [
-        ModelReasoningEffort::Minimal,
-        ModelReasoningEffort::Low,
-        ModelReasoningEffort::Medium,
-        ModelReasoningEffort::High,
-        ModelReasoningEffort::XHigh,
-    ]
-    .into_iter()
-    .map(model_reasoning_effort_to_string)
-    .collect()
-}
-
-fn model_reasoning_effort_to_string(level: ModelReasoningEffort) -> String {
-    let value = match level {
-        ModelReasoningEffort::Minimal => "minimal",
-        ModelReasoningEffort::Low => "low",
-        ModelReasoningEffort::Medium => "medium",
-        ModelReasoningEffort::High => "high",
-        ModelReasoningEffort::XHigh => "xhigh",
-    };
-    value.to_string()
-}
-
-fn claude_reasoning_levels() -> Vec<String> {
-    ["low", "medium", "high", "max"]
-        .into_iter()
-        .map(str::to_string)
-        .collect()
-}
-
-async fn discover_from_commands(
+pub async fn discover_from_commands(
     program: &str,
     command_candidates: &[&[&str]],
     parse_output: fn(&str) -> Vec<String>,
@@ -579,7 +440,7 @@ async fn run_discovery_command(program: &str, args: &[&str]) -> Option<String> {
     Some(stdout)
 }
 
-fn parse_models_output(output: &str) -> Vec<String> {
+pub fn parse_models_output(output: &str) -> Vec<String> {
     let mut models = parse_json_list(
         output,
         &[
@@ -602,7 +463,7 @@ fn parse_models_output(output: &str) -> Vec<String> {
         .collect()
 }
 
-fn parse_reasoning_output(output: &str) -> Vec<String> {
+pub fn parse_reasoning_output(output: &str) -> Vec<String> {
     let mut values = parse_json_list(
         output,
         &[
