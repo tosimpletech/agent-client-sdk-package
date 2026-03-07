@@ -232,6 +232,12 @@ impl OpencodeClient {
         }
     }
 
+    pub fn formatter(&self) -> FormatterApi {
+        FormatterApi {
+            client: self.clone(),
+        }
+    }
+
     pub fn find(&self) -> FindApi {
         FindApi {
             client: self.clone(),
@@ -887,6 +893,20 @@ impl EventApi {
     pub async fn subscribe(&self, options: RequestOptions) -> Result<SseStream> {
         self.client
             .request_sse(Method::GET, "/event", options)
+            .await
+    }
+}
+
+/// Formatter endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct FormatterApi {
+    client: OpencodeClient,
+}
+
+impl FormatterApi {
+    pub async fn status(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("formatter.status", options)
             .await
     }
 }
