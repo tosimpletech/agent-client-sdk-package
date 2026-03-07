@@ -38,6 +38,7 @@ def main():
                 "args": args,
                 "flags": flags,
                 "values": values,
+                "pid": os.getpid(),
                 "env": {
                     "OPENCODE_CONFIG_CONTENT": os.environ.get("OPENCODE_CONFIG_CONTENT", ""),
                     "PATH": os.environ.get("PATH", ""),
@@ -48,7 +49,10 @@ def main():
     if len(args) > 0 and args[0] == "serve":
         hostname = values.get("--hostname", "127.0.0.1")
         port = values.get("--port", "4096")
-        print(f"opencode server listening on http://{hostname}:{port}", flush=True)
+        no_listen = os.environ.get("OPENCODE_MOCK_NO_LISTEN") == "1"
+        exit_log = os.environ.get("OPENCODE_MOCK_EXIT_LOG")
+        if not no_listen:
+            print(f"opencode server listening on http://{hostname}:{port}", flush=True)
 
         keep_running = True
 
@@ -61,6 +65,9 @@ def main():
 
         while keep_running:
             time.sleep(0.05)
+
+        if exit_log:
+            append_log(Path(exit_log), {"event": "serve-exit"})
 
         return
 
