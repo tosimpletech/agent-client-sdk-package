@@ -202,6 +202,12 @@ impl OpencodeClient {
         }
     }
 
+    pub fn command(&self) -> CommandApi {
+        CommandApi {
+            client: self.clone(),
+        }
+    }
+
     pub fn config(&self) -> ConfigApi {
         ConfigApi {
             client: self.clone(),
@@ -805,6 +811,18 @@ impl AppApi {
 
     pub async fn skills(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client.call_operation("app.skills", options).await
+    }
+}
+
+/// Command endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct CommandApi {
+    client: OpencodeClient,
+}
+
+impl CommandApi {
+    pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("command.list", options).await
     }
 }
 
