@@ -274,6 +274,12 @@ impl OpencodeClient {
         }
     }
 
+    pub fn tui(&self) -> TuiApi {
+        TuiApi {
+            client: self.clone(),
+        }
+    }
+
     /// Execute any OpenCode operation by official `operationId`.
     pub async fn call_operation(
         &self,
@@ -1066,6 +1072,94 @@ pub struct VcsApi {
 impl VcsApi {
     pub async fn get(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client.call_operation("vcs.get", options).await
+    }
+}
+
+/// TUI endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct TuiApi {
+    client: OpencodeClient,
+}
+
+impl TuiApi {
+    pub async fn append_prompt(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("tui.appendPrompt", options)
+            .await
+    }
+
+    pub async fn clear_prompt(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("tui.clearPrompt", options).await
+    }
+
+    pub async fn execute_command(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("tui.executeCommand", options)
+            .await
+    }
+
+    pub async fn open_help(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("tui.openHelp", options).await
+    }
+
+    pub async fn open_models(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("tui.openModels", options).await
+    }
+
+    pub async fn open_sessions(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("tui.openSessions", options)
+            .await
+    }
+
+    pub async fn open_themes(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("tui.openThemes", options).await
+    }
+
+    pub async fn publish(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("tui.publish", options).await
+    }
+
+    pub async fn select_session(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("tui.selectSession", options)
+            .await
+    }
+
+    pub async fn show_toast(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("tui.showToast", options).await
+    }
+
+    pub async fn submit_prompt(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("tui.submitPrompt", options)
+            .await
+    }
+
+    pub fn control(&self) -> TuiControlApi {
+        TuiControlApi {
+            client: self.client.clone(),
+        }
+    }
+}
+
+/// TUI control endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct TuiControlApi {
+    client: OpencodeClient,
+}
+
+impl TuiControlApi {
+    pub async fn next(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("tui.control.next", options)
+            .await
+    }
+
+    pub async fn response(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("tui.control.response", options)
+            .await
     }
 }
 
