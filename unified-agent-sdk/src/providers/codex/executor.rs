@@ -9,7 +9,7 @@ use codex::{ApprovalMode, Codex, CodexOptions, ModelReasoningEffort, Thread, Thr
 use crate::{
     error::{ExecutorError, Result},
     executor::{AgentCapabilities, AgentExecutor, AvailabilityStatus, SpawnConfig},
-    session::{AgentSession, register_completed_session},
+    session::{AgentSession, SessionMetadata},
     types::{ExecutorType, PermissionPolicy},
 };
 
@@ -88,22 +88,20 @@ impl CodexExecutor {
                 )
             })?;
 
-        register_completed_session(
-            session_id.clone(),
+        Ok(AgentSession::from_metadata_with_exit_status(
+            SessionMetadata {
+                session_id,
+                executor_type: ExecutorType::Codex,
+                working_dir: working_dir.to_path_buf(),
+                created_at: Utc::now(),
+                last_message_id: None,
+                context_window_override_tokens,
+            },
             crate::types::ExitStatus {
                 code: None,
                 success: true,
             },
-        );
-
-        Ok(AgentSession {
-            session_id,
-            executor_type: ExecutorType::Codex,
-            working_dir: working_dir.to_path_buf(),
-            created_at: Utc::now(),
-            last_message_id: None,
-            context_window_override_tokens,
-        })
+        ))
     }
 }
 
