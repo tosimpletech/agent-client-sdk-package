@@ -169,6 +169,58 @@ async fn parses_sse_events_from_global_event() {
 }
 
 #[tokio::test]
+async fn parses_sse_data_when_last_line_has_no_newline() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\nevent: tail\ndata: final";
+    let (base_url, _request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        timeout: Duration::from_secs(5),
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let mut stream = client
+        .global()
+        .event(RequestOptions::default())
+        .await
+        .expect("global event stream");
+
+    let event = tokio::time::timeout(Duration::from_secs(2), stream.next())
+        .await
+        .expect("event timeout")
+        .expect("event item")
+        .expect("event ok");
+    assert_eq!(event.event.as_deref(), Some("tail"));
+    assert_eq!(event.data, "final");
+}
+
+#[tokio::test]
+async fn malformed_sse_frame_terminates_without_event() {
+    let response =
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata\n\n";
+    let (base_url, _request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        timeout: Duration::from_secs(5),
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let mut stream = client
+        .global()
+        .event(RequestOptions::default())
+        .await
+        .expect("global event stream");
+
+    let next = tokio::time::timeout(Duration::from_secs(2), stream.next())
+        .await
+        .expect("next timeout");
+    assert!(next.is_none(), "malformed frame should not emit event");
+}
+
+#[tokio::test]
 async fn lsp_status_requests_expected_path() {
     let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}";
     let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;

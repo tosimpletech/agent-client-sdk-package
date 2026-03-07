@@ -17,8 +17,8 @@ pub use client::{
 };
 pub use errors::{Error, Result};
 pub use server::{
-    OpencodeServer, OpencodeServerOptions, OpencodeTui, OpencodeTuiOptions, create_opencode,
-    create_opencode_server, create_opencode_tui,
+    Opencode, OpencodeServer, OpencodeServerOptions, OpencodeTui, OpencodeTuiOptions,
+    create_opencode, create_opencode_server, create_opencode_tui,
 };
 pub use types::{PartInput, PromptInput, SessionCreateInput};
 

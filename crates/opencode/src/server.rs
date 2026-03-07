@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -302,7 +302,22 @@ async fn terminate_child(child: &mut Child) {
 
 fn resolve_cli_path(cli_path: Option<&Path>) -> Result<PathBuf> {
     match cli_path {
-        Some(path) => Ok(path.to_path_buf()),
+        Some(path) if is_bare_command(path) => which::which(path).map_err(|_| {
+            Error::CLINotFound(CLINotFoundError::new(
+                "OpenCode CLI not found in PATH",
+                Some(path.to_string_lossy().into_owned()),
+            ))
+        }),
+        Some(path) => {
+            if path.is_file() {
+                Ok(path.to_path_buf())
+            } else {
+                Err(Error::CLINotFound(CLINotFoundError::new(
+                    "OpenCode CLI not found at configured path",
+                    Some(path.to_string_lossy().into_owned()),
+                )))
+            }
+        }
         None => which::which("opencode").map_err(|_| {
             Error::CLINotFound(CLINotFoundError::new(
                 "OpenCode CLI not found in PATH",
@@ -310,6 +325,11 @@ fn resolve_cli_path(cli_path: Option<&Path>) -> Result<PathBuf> {
             ))
         }),
     }
+}
+
+fn is_bare_command(path: &Path) -> bool {
+    let mut components = path.components();
+    matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
 }
 
 fn extract_url_from_line(line: &str) -> Option<String> {

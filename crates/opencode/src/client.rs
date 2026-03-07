@@ -367,32 +367,15 @@ impl OpencodeClient {
                         continue;
                     }
 
-                    if line.starts_with(':') {
-                        continue;
-                    }
-
-                    let (field, value) = match line.split_once(':') {
-                        Some((f, v)) => (f, v.trim_start()),
-                        None => (line.as_str(), ""),
-                    };
-
-                    match field {
-                        "event" => current.event = Some(value.to_string()),
-                        "id" => current.id = Some(value.to_string()),
-                        "retry" => {
-                            if let Ok(v) = value.parse::<u64>() {
-                                current.retry = Some(v);
-                            }
-                        }
-                        "data" => {
-                            if !current.data.is_empty() {
-                                current.data.push('\n');
-                            }
-                            current.data.push_str(value);
-                        }
-                        _ => {}
-                    }
+                    apply_sse_line(&line, &mut current);
                 }
+            }
+
+            if !buffer.is_empty() {
+                if buffer.ends_with('\r') {
+                    buffer.pop();
+                }
+                apply_sse_line(&buffer, &mut current);
             }
 
             if !current.is_empty() {
@@ -415,8 +398,7 @@ impl OpencodeClient {
 
         let mut merged_headers = self.inner.default_headers.clone();
         for (k, v) in &options.headers {
-            let name = HeaderName::from_bytes(k.as_bytes())
-                .map_err(|e| Error::Other(format!("Invalid header name {k}: {e}")))?;
+            let name = HeaderName::from_bytes(k.as_bytes())?;
             let value = HeaderValue::from_str(v)?;
             merged_headers.insert(name, value);
         }
@@ -949,6 +931,34 @@ fn headers_to_map(headers: &HeaderMap) -> HashMap<String, String> {
 
 fn encode_component(value: &str) -> String {
     utf8_percent_encode(value, COMPONENT_ENCODE_SET).to_string()
+}
+
+fn apply_sse_line(line: &str, current: &mut SseEvent) {
+    if line.is_empty() || line.starts_with(':') {
+        return;
+    }
+
+    let (field, value) = match line.split_once(':') {
+        Some((f, v)) => (f, v.trim_start()),
+        None => (line, ""),
+    };
+
+    match field {
+        "event" => current.event = Some(value.to_string()),
+        "id" => current.id = Some(value.to_string()),
+        "retry" => {
+            if let Ok(v) = value.parse::<u64>() {
+                current.retry = Some(v);
+            }
+        }
+        "data" => {
+            if !current.data.is_empty() {
+                current.data.push('\n');
+            }
+            current.data.push_str(value);
+        }
+        _ => {}
+    }
 }
 
 fn resolve_path_value<'a>(
