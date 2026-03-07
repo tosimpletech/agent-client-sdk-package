@@ -262,6 +262,12 @@ impl OpencodeClient {
         }
     }
 
+    pub fn vcs(&self) -> VcsApi {
+        VcsApi {
+            client: self.clone(),
+        }
+    }
+
     /// Execute any OpenCode operation by official `operationId`.
     pub async fn call_operation(
         &self,
@@ -1026,6 +1032,18 @@ impl FormatterApi {
         self.client
             .call_operation("formatter.status", options)
             .await
+    }
+}
+
+/// VCS endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct VcsApi {
+    client: OpencodeClient,
+}
+
+impl VcsApi {
+    pub async fn get(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("vcs.get", options).await
     }
 }
 

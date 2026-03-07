@@ -197,6 +197,34 @@ async fn lsp_status_requests_expected_path() {
 }
 
 #[tokio::test]
+async fn vcs_get_requests_expected_path() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"branch\":\"main\"}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .vcs()
+        .get(RequestOptions::default())
+        .await
+        .expect("vcs get");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["branch"], "main");
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("GET /vcs HTTP/1.1")
+            || request.contains("GET http://") && request.contains("/vcs "),
+        "unexpected request line: {request}"
+    );
+}
+
+#[tokio::test]
 async fn missing_multi_param_path_field_returns_explicit_error() {
     let client = create_opencode_client(Some(OpencodeClientConfig {
         base_url: "http://127.0.0.1:1".to_string(),
