@@ -190,6 +190,12 @@ impl OpencodeClient {
         }
     }
 
+    pub fn app(&self) -> AppApi {
+        AppApi {
+            client: self.clone(),
+        }
+    }
+
     pub fn global(&self) -> GlobalApi {
         GlobalApi {
             client: self.clone(),
@@ -270,6 +276,12 @@ impl OpencodeClient {
 
     pub fn find(&self) -> FindApi {
         FindApi {
+            client: self.clone(),
+        }
+    }
+
+    pub fn instance(&self) -> InstanceApi {
+        InstanceApi {
             client: self.clone(),
         }
     }
@@ -765,6 +777,40 @@ impl GlobalApi {
     pub async fn event(&self, options: RequestOptions) -> Result<SseStream> {
         self.client
             .request_sse(Method::GET, "/global/event", options)
+            .await
+    }
+}
+
+/// App endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct AppApi {
+    client: OpencodeClient,
+}
+
+impl AppApi {
+    pub async fn agents(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("app.agents", options).await
+    }
+
+    pub async fn log(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("app.log", options).await
+    }
+
+    pub async fn skills(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("app.skills", options).await
+    }
+}
+
+/// Instance endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct InstanceApi {
+    client: OpencodeClient,
+}
+
+impl InstanceApi {
+    pub async fn dispose(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("instance.dispose", options)
             .await
     }
 }

@@ -365,3 +365,63 @@ async fn auth_set_puts_expected_path_and_body() {
     );
     assert!(request.contains("\"api_key\":\"sk-test\""));
 }
+
+#[tokio::test]
+async fn app_log_posts_expected_path_and_body() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .app()
+        .log(RequestOptions::default().with_body(json!({
+            "level": "info",
+            "message": "hello"
+        })))
+        .await
+        .expect("app log");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["ok"], true);
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("POST /log HTTP/1.1")
+            || request.contains("POST http://") && request.contains("/log "),
+        "unexpected request line: {request}"
+    );
+    assert!(request.contains("\"message\":\"hello\""));
+}
+
+#[tokio::test]
+async fn instance_dispose_posts_expected_path() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"disposed\":true}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .instance()
+        .dispose(RequestOptions::default())
+        .await
+        .expect("instance dispose");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["disposed"], true);
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("POST /instance/dispose HTTP/1.1")
+            || request.contains("POST http://") && request.contains("/instance/dispose"),
+        "unexpected request line: {request}"
+    );
+}
