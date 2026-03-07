@@ -34,7 +34,7 @@ Unified SDK for multiple AI coding agents (Claude Code, Codex, etc.) providing a
 - [x] `SessionMetadata` - persistence metadata
 - [x] `SessionResume` - resume information
 
-**Status**: Core implemented (metadata + event pipeline); lifecycle controls (`wait`/`cancel`) pending
+**Status**: Implemented (metadata + event pipeline + lifecycle controls `wait`/`cancel`)
 
 ### 5. Event System (`event.rs`)
 - [x] `AgentEvent` - unified event types
@@ -50,13 +50,13 @@ Unified SDK for multiple AI coding agents (Claude Code, Codex, etc.) providing a
 - [x] Implement `ProfileManager` with file-based storage
 - [x] Implement basic `LogNormalizer` for Codex
 - [x] Implement basic `LogNormalizer` for Claude Code
-- [ ] Add process management to `AgentSession` (`wait`/`cancel`)
+- [x] Add process management to `AgentSession` (`wait`/`cancel`)
 
 ### Phase 2: Adapters
 - [x] Create `CodexAdapter` implementing `AgentExecutor`
 - [x] Create `ClaudeCodeAdapter` implementing `AgentExecutor`
 - [x] Implement log-to-event conversion
-- [ ] Add integration tests
+- [x] Add integration tests
 
 ### Phase 3: Advanced Features
 - [x] Add profile discovery mechanism
@@ -116,14 +116,13 @@ Base SDKs
 
 ## Current Gap Assessment (2026-03-08)
 
-- `AgentSession::wait` and `AgentSession::cancel` are still placeholders returning `"not implemented"`.
-- Integration tests are still missing at crate level (`unified-agent-sdk/tests` does not exist yet); current coverage is unit tests + doctests.
+- `AgentSession::wait` and `AgentSession::cancel` now use lifecycle controllers (default behavior treats unmanaged sessions as completed; adapters register completed-session controllers).
+- Integration tests now exist at crate level (`unified-agent-sdk/tests`) and cover end-to-end event flow for Codex/Claude normalizers.
 - Performance optimization work is not tracked by explicit benchmarks/targets yet.
 - API docs are substantially present (public rustdoc + doctests), but release-grade checklist items are still pending.
 
 ## Next Steps
 
-1. Implement session lifecycle control (`wait`/`cancel`) with provider-backed process/client handles.
-2. Add integration tests for adapter spawn/resume and end-to-end event flow using mock CLIs.
+1. Add mock-CLI based integration tests for adapter `spawn/resume` paths (not only event pipeline).
+2. Finish release checklist items (API docs pass + changelog/release notes + publish verification).
 3. Define baseline performance metrics (throughput/latency/memory) and run optimization against measured bottlenecks.
-4. Finish release checklist items (API docs pass + changelog/release notes + publish verification).

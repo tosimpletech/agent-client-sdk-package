@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 
 use crate::error::{ExecutorError, Result};
 use crate::executor::{AgentCapabilities, AgentExecutor, AvailabilityStatus, SpawnConfig};
-use crate::session::AgentSession;
+use crate::session::{AgentSession, register_completed_session};
 use crate::types::{ExecutorType, PermissionPolicy};
 
 const DEFAULT_SESSION_ID: &str = "default";
@@ -133,6 +133,14 @@ impl ClaudeCodeExecutor {
         working_dir: &Path,
         context_window_override_tokens: Option<u32>,
     ) -> AgentSession {
+        register_completed_session(
+            session_id.clone(),
+            crate::types::ExitStatus {
+                code: None,
+                success: true,
+            },
+        );
+
         AgentSession {
             session_id,
             executor_type: ExecutorType::ClaudeCode,
