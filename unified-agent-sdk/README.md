@@ -1,10 +1,11 @@
 # Unified Agent SDK
 
-Unified Rust SDK that provides one interface for multiple coding agents (currently Codex and Claude Code).
+Unified Rust SDK that provides one interface for multiple coding agents.
 
 ## Table of Contents
 
 - [Overview](#overview)
+- [Supported Providers](#supported-providers)
 - [Installation](#installation)
 - [Quickstart](#quickstart)
 - [API Overview](#api-overview)
@@ -16,12 +17,19 @@ Unified Rust SDK that provides one interface for multiple coding agents (current
 `unified-agent-sdk` offers:
 
 - A shared executor interface (`AgentExecutor`) across providers
-- Provider-based architecture: each SDK (Codex, Claude Code) encapsulates executor and normalizer in independent modules
+- Provider-based architecture: each SDK encapsulates executor and normalizer in independent modules
 - Profile/config resolution (`ProfileManager`)
 - Unified event and log normalization pipeline (`AgentEvent`, `LogNormalizer`)
 - Context usage signaling with optional capacity/remaining metadata (`ContextUsageUpdated`)
 
 It is designed to keep integration code stable while switching agent backends.
+
+## Supported Providers
+
+| Provider | Executor | CLI Required |
+|----------|----------|--------------|
+| Codex | `CodexExecutor` | `codex` |
+| Claude Code | `ClaudeCodeExecutor` | `claude` |
 
 ## Installation
 
