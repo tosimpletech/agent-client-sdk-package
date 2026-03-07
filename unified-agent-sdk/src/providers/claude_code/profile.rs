@@ -56,6 +56,8 @@ pub async fn discover() -> DiscoveryData {
     }
 }
 
+/// Uses `SubprocessCliTransport` only to reuse its CLI lookup behavior.
+/// Returns `None` when resolution fails instead of creating a transport.
 fn resolve_cli_path() -> Option<String> {
     SubprocessCliTransport::new(Prompt::Messages, ClaudeAgentOptions::default())
         .ok()
