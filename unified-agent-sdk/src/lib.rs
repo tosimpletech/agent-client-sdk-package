@@ -1,23 +1,16 @@
 //! Unified Rust SDK for multiple AI coding agents.
 //!
-//! `unified-agent-sdk` provides one consistent interface over multiple agent backends.
-//! It is designed for applications that want to swap executors without rewriting
-//! orchestration logic.
+//! `unified-agent-sdk` provides one consistent interface over multiple agent backends
+//! (currently Claude Code and Codex). It is designed for applications that want to swap
+//! executors without rewriting orchestration logic.
 //!
 //! # Feature Overview
 //!
 //! - Unified executor API via [`AgentExecutor`]
-//! - Provider adapter architecture
+//! - Provider adapters for Claude Code and Codex
 //! - Unified event pipeline (`raw logs -> normalized logs -> AgentEvent`)
 //! - Profile/config resolution with runtime discovery ([`ProfileManager`])
 //! - Cross-provider capability and availability introspection
-//!
-//! # Supported Agents
-//!
-//! | Agent | `ExecutorType` | Executor Adapter | Log Normalizer | Profile Discovery |
-//! | --- | --- | --- | --- | --- |
-//! | Claude Code | `ExecutorType::ClaudeCode` | [`ClaudeCodeExecutor`] | [`ClaudeCodeLogNormalizer`] | `providers::claude_code::profile` |
-//! | Codex | `ExecutorType::Codex` | [`CodexExecutor`] | [`CodexLogNormalizer`] | `providers::codex::profile` |
 //!
 //! # Common Scenarios
 //!
