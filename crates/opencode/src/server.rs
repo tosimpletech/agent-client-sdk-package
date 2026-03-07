@@ -182,6 +182,7 @@ pub async fn create_opencode_server(
     loop {
         tokio::select! {
             _ = &mut sleeper => {
+                terminate_child(&mut child).await;
                 return Err(Error::ServerStartupTimeout { timeout_ms });
             }
             maybe_line = rx.recv() => {
@@ -195,6 +196,7 @@ pub async fn create_opencode_server(
                                 return Ok(OpencodeServer { url, child });
                             }
 
+                            terminate_child(&mut child).await;
                             return Err(Error::OpencodeSDK(OpencodeSDKError::new(format!(
                                 "Failed to parse server url from output: {line}"
                             ))));
@@ -208,6 +210,13 @@ pub async fn create_opencode_server(
                                 Some(output),
                             )));
                         }
+
+                        terminate_child(&mut child).await;
+                        return Err(Error::Process(ProcessError::new(
+                            "Server log streams closed before reporting a listening URL",
+                            None,
+                            Some(output),
+                        )));
                     }
                 }
             }
@@ -281,6 +290,13 @@ where
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let _ = tx.send(line);
+    }
+}
+
+async fn terminate_child(child: &mut Child) {
+    if child.id().is_some() {
+        let _ = child.start_kill();
+        let _ = child.wait().await;
     }
 }
 

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use futures::StreamExt;
-use opencode::{OpencodeClientConfig, RequestOptions, create_opencode_client};
+use opencode::{Error, OpencodeClientConfig, RequestOptions, create_opencode_client};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -166,4 +166,21 @@ async fn parses_sse_events_from_global_event() {
         .expect("second ok");
     assert_eq!(second.event, None);
     assert_eq!(second.data, "second");
+}
+
+#[tokio::test]
+async fn missing_multi_param_path_field_returns_explicit_error() {
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url: "http://127.0.0.1:1".to_string(),
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let err = client
+        .session()
+        .message(RequestOptions::default().with_path("id", "ses_123"))
+        .await
+        .expect_err("must fail with missing messageID");
+
+    assert!(matches!(err, Error::MissingPathParameter(ref key) if key == "messageID"));
 }

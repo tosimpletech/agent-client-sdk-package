@@ -393,6 +393,7 @@ impl OpencodeClient {
         path_params: &HashMap<String, String>,
         query_params: &HashMap<String, Value>,
     ) -> Result<Url> {
+        let allow_id_fallback = path_template.matches('{').count() == 1;
         let mut rendered_path = String::new();
         let mut chars = path_template.chars().peekable();
 
@@ -416,7 +417,7 @@ impl OpencodeClient {
                 )));
             }
 
-            let value = resolve_path_value(path_params, &key)
+            let value = resolve_path_value(path_params, &key, allow_id_fallback)
                 .ok_or_else(|| Error::MissingPathParameter(key.clone()))?;
             rendered_path.push_str(&encode_component(value));
         }
@@ -726,17 +727,16 @@ fn encode_component(value: &str) -> String {
     utf8_percent_encode(value, COMPONENT_ENCODE_SET).to_string()
 }
 
-fn resolve_path_value<'a>(params: &'a HashMap<String, String>, key: &str) -> Option<&'a str> {
+fn resolve_path_value<'a>(
+    params: &'a HashMap<String, String>,
+    key: &str,
+    allow_id_fallback: bool,
+) -> Option<&'a str> {
     if let Some(v) = params.get(key) {
         return Some(v);
     }
 
     if let Some(v) = params.get(&key.to_ascii_lowercase()) {
-        return Some(v);
-    }
-
-    // Compatibility with official JS SDK v1 generated shape that often uses {id}.
-    if let Some(v) = params.get("id") {
         return Some(v);
     }
 
@@ -753,6 +753,15 @@ fn resolve_path_value<'a>(params: &'a HashMap<String, String>, key: &str) -> Opt
 
         let snake_id = format!("{}_id", snake);
         if let Some(v) = params.get(&snake_id) {
+            return Some(v);
+        }
+    }
+
+    // Compatibility with official JS SDK v1 shape that frequently uses {id}
+    // for single-parameter routes. Avoid this fallback on multi-parameter
+    // routes (e.g. {sessionID}/{messageID}) to prevent accidental substitution.
+    if allow_id_fallback {
+        if let Some(v) = params.get("id") {
             return Some(v);
         }
     }
