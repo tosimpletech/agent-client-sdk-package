@@ -219,7 +219,6 @@ impl OpencodeClient {
             client: self.clone(),
         }
     }
-
     pub fn event(&self) -> EventApi {
         EventApi {
             client: self.clone(),
@@ -802,7 +801,6 @@ impl ToolApi {
             .await
     }
 }
-
 /// Event endpoint namespace.
 #[derive(Debug, Clone)]
 pub struct EventApi {
