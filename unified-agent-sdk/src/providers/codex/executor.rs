@@ -1,4 +1,4 @@
-//! Codex adapter for unified executor abstraction.
+//! Codex adapter for the unified executor abstraction.
 
 use std::path::Path;
 
@@ -14,13 +14,30 @@ use crate::{
 };
 
 /// Adapter that maps [`codex::Codex`] to the unified [`AgentExecutor`] interface.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use unified_agent_sdk::{AgentExecutor, CodexExecutor, executor::SpawnConfig};
+///
+/// # async fn run() -> unified_agent_sdk::Result<()> {
+/// let executor = CodexExecutor::default();
+/// let cwd = std::env::current_dir()?;
+/// let _session = executor
+///     .spawn(&cwd, "List the top 3 refactor opportunities.", &SpawnConfig::default())
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct CodexExecutor {
     options: CodexOptions,
 }
 
 impl CodexExecutor {
-    /// Create a new executor with optional base Codex options.
+    /// Creates a new executor with optional base Codex client options.
+    ///
+    /// Values from [`SpawnConfig`] are merged at runtime for each session.
     pub fn new(options: Option<CodexOptions>) -> Self {
         Self {
             options: options.unwrap_or_default(),

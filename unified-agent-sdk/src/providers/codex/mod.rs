@@ -1,4 +1,7 @@
-//! Codex provider module.
+//! Codex provider integration.
+//!
+//! Use [`CodexExecutor`] for session lifecycle operations and
+//! [`CodexLogNormalizer`] when converting Codex thread events into unified logs.
 
 mod executor;
 mod normalizer;

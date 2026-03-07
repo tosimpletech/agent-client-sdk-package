@@ -1,4 +1,29 @@
-//! Profile and configuration management
+//! Profile and configuration management.
+//!
+//! Profiles are loaded from a JSON file (default: `~/.unified-agent/profiles.json`) and
+//! merged in this order:
+//!
+//! 1. `default` variant for the executor
+//! 2. requested variant overrides
+//! 3. runtime overrides from [`ExecutorConfig`]
+//! 4. runtime discovery fallback (model/reasoning only)
+//!
+//! Minimal example:
+//!
+//! ```json
+//! {
+//!   "codex": {
+//!     "default": {
+//!       "model": "gpt-5-codex",
+//!       "reasoning": "medium",
+//!       "permission_policy": "prompt"
+//!     },
+//!     "plan": {
+//!       "reasoning": "high"
+//!     }
+//!   }
+//! }
+//! ```
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -74,7 +99,7 @@ struct CachedDiscovery {
     expires_at: Instant,
 }
 
-/// Profile manager
+/// Profile manager for loading, resolving, and discovering executor configuration.
 pub struct ProfileManager {
     config_path: PathBuf,
     cache: RwLock<ProfileCache>,
@@ -395,6 +420,10 @@ fn normalize_variant_key(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+/// Runs discovery commands in order and parses the first non-empty successful output.
+///
+/// This helper is best-effort: command failures, parse failures, and timeouts are
+/// ignored so probing can continue with fallback candidates.
 pub async fn discover_from_commands(
     program: &str,
     command_candidates: &[&[&str]],
@@ -440,6 +469,19 @@ async fn run_discovery_command(program: &str, args: &[&str]) -> Option<String> {
     Some(stdout)
 }
 
+/// Parses model identifiers from CLI output.
+///
+/// Supports both JSON and plain-text command output, then deduplicates values while
+/// preserving first-seen order.
+///
+/// # Examples
+///
+/// ```rust
+/// use unified_agent_sdk::profile::parse_models_output;
+///
+/// let json = r#"{"models":[{"id":"gpt-5-codex"},{"id":"gpt-5"}]}"#;
+/// assert_eq!(parse_models_output(json), vec!["gpt-5-codex", "gpt-5"]);
+/// ```
 pub fn parse_models_output(output: &str) -> Vec<String> {
     let mut models = parse_json_list(
         output,
@@ -463,6 +505,19 @@ pub fn parse_models_output(output: &str) -> Vec<String> {
         .collect()
 }
 
+/// Parses reasoning/effort levels from CLI output.
+///
+/// Accepts JSON and plain-text output and normalizes known variants (for example
+/// `x-high` -> `xhigh`) before deduplication.
+///
+/// # Examples
+///
+/// ```rust
+/// use unified_agent_sdk::profile::parse_reasoning_output;
+///
+/// let text = "low\nmedium\nx-high\n";
+/// assert_eq!(parse_reasoning_output(text), vec!["low", "medium", "xhigh"]);
+/// ```
 pub fn parse_reasoning_output(output: &str) -> Vec<String> {
     let mut values = parse_json_list(
         output,
