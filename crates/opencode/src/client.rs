@@ -1,3 +1,10 @@
+//! OpenCode HTTP client and endpoint namespaces.
+//!
+//! This module provides:
+//! - low-level request primitives (`request_json`, `request_sse`)
+//! - namespace wrappers for OpenCode endpoints
+//! - operation-id dispatch helpers aligned with OpenCode OpenAPI specs
+
 use std::collections::HashMap;
 use std::fmt;
 use std::pin::Pin;
@@ -54,21 +61,27 @@ pub struct RequestOptions {
 }
 
 impl RequestOptions {
+    /// Adds or overrides one path parameter.
+    ///
+    /// These values are used to render placeholders such as `{sessionID}`.
     pub fn with_path(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.path.insert(key.into(), value.into());
         self
     }
 
+    /// Adds or overrides one query parameter.
     pub fn with_query(mut self, key: impl Into<String>, value: Value) -> Self {
         self.query.insert(key.into(), value);
         self
     }
 
+    /// Adds or overrides one request header.
     pub fn with_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.insert(key.into(), value.into());
         self
     }
 
+    /// Sets a JSON request body.
     pub fn with_body(mut self, value: Value) -> Self {
         self.body = Some(value);
         self
@@ -89,9 +102,13 @@ pub struct ApiResponse {
 /// Parsed SSE event from OpenCode streaming endpoints.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SseEvent {
+    /// Event type (`event:` line).
     pub event: Option<String>,
+    /// Event id (`id:` line).
     pub id: Option<String>,
+    /// Retry hint (`retry:` line).
     pub retry: Option<u64>,
+    /// Event data payload (joined `data:` lines).
     pub data: String,
 }
 
@@ -175,7 +192,13 @@ impl fmt::Debug for OpencodeClient {
     }
 }
 
-/// Create OpenCode HTTP client.
+/// Creates an OpenCode HTTP client from config.
+///
+/// The client applies:
+/// - default headers from `config.headers`
+/// - `Authorization: Bearer ...` when `bearer_token` is set
+/// - `x-opencode-directory` when `directory` is set
+/// - a request timeout from `config.timeout`
 pub fn create_opencode_client(config: Option<OpencodeClientConfig>) -> Result<OpencodeClient> {
     let config = config.unwrap_or_default();
 
@@ -216,120 +239,140 @@ pub fn create_opencode_client(config: Option<OpencodeClientConfig>) -> Result<Op
 }
 
 impl OpencodeClient {
+    /// Returns session endpoint APIs (`/session/...`).
     pub fn session(&self) -> SessionApi {
         SessionApi {
             client: self.clone(),
         }
     }
 
+    /// Returns app-level endpoint APIs.
     pub fn app(&self) -> AppApi {
         AppApi {
             client: self.clone(),
         }
     }
 
+    /// Returns global endpoint APIs.
     pub fn global(&self) -> GlobalApi {
         GlobalApi {
             client: self.clone(),
         }
     }
 
+    /// Returns command endpoint APIs.
     pub fn command(&self) -> CommandApi {
         CommandApi {
             client: self.clone(),
         }
     }
 
+    /// Returns config endpoint APIs.
     pub fn config(&self) -> ConfigApi {
         ConfigApi {
             client: self.clone(),
         }
     }
 
+    /// Returns project endpoint APIs.
     pub fn project(&self) -> ProjectApi {
         ProjectApi {
             client: self.clone(),
         }
     }
 
+    /// Returns path endpoint APIs.
     pub fn path(&self) -> PathApi {
         PathApi {
             client: self.clone(),
         }
     }
 
+    /// Returns file endpoint APIs.
     pub fn file(&self) -> FileApi {
         FileApi {
             client: self.clone(),
         }
     }
 
+    /// Returns LSP endpoint APIs.
     pub fn lsp(&self) -> LspApi {
         LspApi {
             client: self.clone(),
         }
     }
 
+    /// Returns tool endpoint APIs.
     pub fn tool(&self) -> ToolApi {
         ToolApi {
             client: self.clone(),
         }
     }
 
+    /// Returns provider endpoint APIs.
     pub fn provider(&self) -> ProviderApi {
         ProviderApi {
             client: self.clone(),
         }
     }
 
+    /// Returns auth endpoint APIs.
     pub fn auth(&self) -> AuthApi {
         AuthApi {
             client: self.clone(),
         }
     }
 
+    /// Returns MCP endpoint APIs.
     pub fn mcp(&self) -> McpApi {
         McpApi {
             client: self.clone(),
         }
     }
 
+    /// Returns PTY endpoint APIs.
     pub fn pty(&self) -> PtyApi {
         PtyApi {
             client: self.clone(),
         }
     }
 
+    /// Returns event endpoint APIs.
     pub fn event(&self) -> EventApi {
         EventApi {
             client: self.clone(),
         }
     }
 
+    /// Returns formatter endpoint APIs.
     pub fn formatter(&self) -> FormatterApi {
         FormatterApi {
             client: self.clone(),
         }
     }
 
+    /// Returns find endpoint APIs.
     pub fn find(&self) -> FindApi {
         FindApi {
             client: self.clone(),
         }
     }
 
+    /// Returns instance endpoint APIs.
     pub fn instance(&self) -> InstanceApi {
         InstanceApi {
             client: self.clone(),
         }
     }
 
+    /// Returns VCS endpoint APIs.
     pub fn vcs(&self) -> VcsApi {
         VcsApi {
             client: self.clone(),
         }
     }
 
+    /// Returns TUI endpoint APIs.
     pub fn tui(&self) -> TuiApi {
         TuiApi {
             client: self.clone(),
@@ -385,6 +428,14 @@ impl OpencodeClient {
         self.request_sse(method, path, options).await
     }
 
+    /// Sends one HTTP request and returns a parsed JSON (or text) response envelope.
+    ///
+    /// For `2xx` responses:
+    /// - `204` or empty body -> `{}` payload
+    /// - valid JSON body -> parsed JSON
+    /// - non-JSON body -> string payload
+    ///
+    /// For non-`2xx` responses, returns [`Error::Api`] with status and raw body.
     pub async fn request_json(
         &self,
         method: Method,
@@ -417,6 +468,12 @@ impl OpencodeClient {
         }))
     }
 
+    /// Sends one HTTP request and parses the response as Server-Sent Events.
+    ///
+    /// The parser supports:
+    /// - split UTF-8 across chunks
+    /// - multi-line `data:` fields
+    /// - trailing final lines without a terminating blank line
     pub async fn request_sse(
         &self,
         method: Method,
@@ -579,18 +636,21 @@ pub struct FindApi {
 }
 
 impl FindApi {
+    /// Searches text content.
     pub async fn text(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::GET, "/find", options)
             .await
     }
 
+    /// Searches files by query/pattern.
     pub async fn files(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::GET, "/find/file", options)
             .await
     }
 
+    /// Searches symbols.
     pub async fn symbols(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::GET, "/find/symbol", options)
@@ -605,108 +665,126 @@ pub struct SessionApi {
 }
 
 impl SessionApi {
+    /// Lists sessions.
     pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::GET, "/session", options)
             .await
     }
 
+    /// Creates a new session.
     pub async fn create(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::POST, "/session", options)
             .await
     }
 
+    /// Returns session runtime status.
     pub async fn status(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::GET, "/session/status", options)
             .await
     }
 
+    /// Deletes a session.
     pub async fn delete(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::DELETE, "/session/{sessionID}", options)
             .await
     }
 
+    /// Gets one session by id.
     pub async fn get(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::GET, "/session/{sessionID}", options)
             .await
     }
 
+    /// Updates mutable session fields.
     pub async fn update(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::PATCH, "/session/{sessionID}", options)
             .await
     }
 
+    /// Lists children for a session.
     pub async fn children(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::GET, "/session/{sessionID}/children", options)
             .await
     }
 
+    /// Returns session todo items.
     pub async fn todo(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::GET, "/session/{sessionID}/todo", options)
             .await
     }
 
+    /// Initializes a session.
     pub async fn init(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::POST, "/session/{sessionID}/init", options)
             .await
     }
 
+    /// Forks a session.
     pub async fn fork(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::POST, "/session/{sessionID}/fork", options)
             .await
     }
 
+    /// Aborts the active run in a session.
     pub async fn abort(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::POST, "/session/{sessionID}/abort", options)
             .await
     }
 
+    /// Shares a session.
     pub async fn share(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::POST, "/session/{sessionID}/share", options)
             .await
     }
 
+    /// Revokes sharing for a session.
     pub async fn unshare(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::DELETE, "/session/{sessionID}/share", options)
             .await
     }
 
+    /// Gets session diff.
     pub async fn diff(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::GET, "/session/{sessionID}/diff", options)
             .await
     }
 
+    /// Triggers session summarization.
     pub async fn summarize(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::POST, "/session/{sessionID}/summarize", options)
             .await
     }
 
+    /// Lists messages in a session.
     pub async fn messages(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::GET, "/session/{sessionID}/message", options)
             .await
     }
 
+    /// Sends a prompt message to a session.
     pub async fn prompt(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::POST, "/session/{sessionID}/message", options)
             .await
     }
 
+    /// Gets one message by id.
     pub async fn message(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(
@@ -717,36 +795,42 @@ impl SessionApi {
             .await
     }
 
+    /// Enqueues an async prompt run.
     pub async fn prompt_async(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::POST, "/session/{sessionID}/prompt_async", options)
             .await
     }
 
+    /// Sends a command to a session.
     pub async fn command(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::POST, "/session/{sessionID}/command", options)
             .await
     }
 
+    /// Executes a shell action in a session.
     pub async fn shell(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::POST, "/session/{sessionID}/shell", options)
             .await
     }
 
+    /// Reverts one message in session history.
     pub async fn revert(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::POST, "/session/{sessionID}/revert", options)
             .await
     }
 
+    /// Restores all reverted messages.
     pub async fn unrevert(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::POST, "/session/{sessionID}/unrevert", options)
             .await
     }
 
+    /// Deletes one message.
     pub async fn delete_message(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(
@@ -757,6 +841,7 @@ impl SessionApi {
             .await
     }
 
+    /// Updates one message part.
     pub async fn update_part(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(
@@ -767,6 +852,7 @@ impl SessionApi {
             .await
     }
 
+    /// Deletes one message part.
     pub async fn delete_part(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(
@@ -777,6 +863,7 @@ impl SessionApi {
             .await
     }
 
+    /// Responds to a permission request under one session.
     pub async fn respond_permission(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(

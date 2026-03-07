@@ -46,9 +46,13 @@ impl Default for OpencodeServerOptions {
 /// Options for launching `opencode` TUI.
 #[derive(Debug, Clone, Default)]
 pub struct OpencodeTuiOptions {
+    /// Optional project selector passed as `--project=...`.
     pub project: Option<String>,
+    /// Optional model selector passed as `--model=...`.
     pub model: Option<String>,
+    /// Optional session selector passed as `--session=...`.
     pub session: Option<String>,
+    /// Optional agent selector passed as `--agent=...`.
     pub agent: Option<String>,
     /// Optional OpenCode config JSON forwarded via `OPENCODE_CONFIG_CONTENT`.
     pub config: Option<serde_json::Value>,
@@ -115,7 +119,9 @@ impl Drop for OpencodeTui {
 /// Bundled OpenCode server + client (equivalent to JS `createOpencode`).
 #[derive(Debug)]
 pub struct Opencode {
+    /// HTTP client bound to the launched local server URL.
     pub client: OpencodeClient,
+    /// Handle for the launched local server process.
     pub server: OpencodeServer,
 }
 
@@ -272,7 +278,7 @@ pub fn create_opencode_tui(options: Option<OpencodeTuiOptions>) -> Result<Openco
     Ok(OpencodeTui { child })
 }
 
-/// Create local server + bound client together.
+/// Creates a local OpenCode server and a client bound to its discovered URL.
 pub async fn create_opencode(options: Option<OpencodeServerOptions>) -> Result<Opencode> {
     let server = create_opencode_server(options).await?;
     let client = create_opencode_client(Some(OpencodeClientConfig {

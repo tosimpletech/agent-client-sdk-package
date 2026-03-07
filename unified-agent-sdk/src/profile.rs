@@ -724,7 +724,10 @@ fn preferred_reasoning_level(levels: &[String]) -> Option<String> {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{Duration, UNIX_EPOCH};
+
+    static TEST_CONFIG_SEQ: AtomicU64 = AtomicU64::new(0);
 
     struct TestConfigFile {
         path: PathBuf,
@@ -732,13 +735,15 @@ mod tests {
 
     impl TestConfigFile {
         fn new() -> Self {
+            let seq = TEST_CONFIG_SEQ.fetch_add(1, Ordering::Relaxed);
             let base = std::env::temp_dir().join(format!(
-                "unified-agent-sdk-profile-test-{}-{}",
+                "unified-agent-sdk-profile-test-{}-{}-{}",
                 std::process::id(),
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .expect("clock should be monotonic")
-                    .as_nanos()
+                    .as_nanos(),
+                seq
             ));
             fs::create_dir_all(&base).expect("temp test dir should be created");
             Self {
