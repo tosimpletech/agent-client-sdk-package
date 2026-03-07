@@ -12,7 +12,7 @@ pub mod server;
 pub mod types;
 
 pub use client::{
-    ApiResponse, EventApi, GlobalApi, OpencodeClient, OpencodeClientConfig, ProjectApi,
+    ApiResponse, EventApi, GlobalApi, LspApi, OpencodeClient, OpencodeClientConfig, ProjectApi,
     RequestOptions, SessionApi, create_opencode_client,
 };
 pub use errors::{Error, Result};
