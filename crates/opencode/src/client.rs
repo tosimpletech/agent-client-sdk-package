@@ -214,6 +214,12 @@ impl OpencodeClient {
         }
     }
 
+    pub fn lsp(&self) -> LspApi {
+        LspApi {
+            client: self.clone(),
+        }
+    }
+
     pub fn tool(&self) -> ToolApi {
         ToolApi {
             client: self.clone(),
@@ -792,6 +798,18 @@ impl FileApi {
         self.client
             .request_json(Method::GET, "/file/content", options)
             .await
+    }
+}
+
+/// LSP endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct LspApi {
+    client: OpencodeClient,
+}
+
+impl LspApi {
+    pub async fn status(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.request_json(Method::GET, "/lsp", options).await
     }
 }
 
