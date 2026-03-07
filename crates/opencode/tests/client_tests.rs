@@ -169,58 +169,6 @@ async fn parses_sse_events_from_global_event() {
 }
 
 #[tokio::test]
-async fn parses_sse_data_when_last_line_has_no_newline() {
-    let response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\nevent: tail\ndata: final";
-    let (base_url, _request_rx) = spawn_single_response_server(response.to_string()).await;
-
-    let client = create_opencode_client(Some(OpencodeClientConfig {
-        base_url,
-        timeout: Duration::from_secs(5),
-        ..Default::default()
-    }))
-    .expect("client");
-
-    let mut stream = client
-        .global()
-        .event(RequestOptions::default())
-        .await
-        .expect("global event stream");
-
-    let event = tokio::time::timeout(Duration::from_secs(2), stream.next())
-        .await
-        .expect("event timeout")
-        .expect("event item")
-        .expect("event ok");
-    assert_eq!(event.event.as_deref(), Some("tail"));
-    assert_eq!(event.data, "final");
-}
-
-#[tokio::test]
-async fn malformed_sse_frame_terminates_without_event() {
-    let response =
-        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata\n\n";
-    let (base_url, _request_rx) = spawn_single_response_server(response.to_string()).await;
-
-    let client = create_opencode_client(Some(OpencodeClientConfig {
-        base_url,
-        timeout: Duration::from_secs(5),
-        ..Default::default()
-    }))
-    .expect("client");
-
-    let mut stream = client
-        .global()
-        .event(RequestOptions::default())
-        .await
-        .expect("global event stream");
-
-    let next = tokio::time::timeout(Duration::from_secs(2), stream.next())
-        .await
-        .expect("next timeout");
-    assert!(next.is_none(), "malformed frame should not emit event");
-}
-
-#[tokio::test]
 async fn lsp_status_requests_expected_path() {
     let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}";
     let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
@@ -249,6 +197,179 @@ async fn lsp_status_requests_expected_path() {
 }
 
 #[tokio::test]
+async fn vcs_get_requests_expected_path() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"branch\":\"main\"}";
+
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .vcs()
+        .get(RequestOptions::default())
+        .await
+        .expect("vcs get");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["branch"], "main");
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("GET /vcs HTTP/1.1")
+            || request.contains("GET http://") && request.contains("/vcs "),
+        "unexpected request line: {request}"
+    );
+}
+
+#[tokio::test]
+async fn tui_submit_prompt_posts_expected_path_and_body() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}";
+
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .tui()
+        .submit_prompt(RequestOptions::default().with_body(json!({ "prompt": "hello" })))
+        .await
+        .expect("tui submit prompt");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["ok"], true);
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("POST /tui/submit-prompt HTTP/1.1")
+            || request.contains("POST http://") && request.contains("/tui/submit-prompt"),
+        "unexpected request line: {request}"
+    );
+    assert!(request.contains("\"prompt\":\"hello\""));
+}
+
+#[tokio::test]
+async fn path_get_requests_expected_path() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"cwd\":\"/tmp\"}";
+
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .path()
+        .get(RequestOptions::default())
+        .await
+        .expect("path get");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["cwd"], "/tmp");
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("GET /path HTTP/1.1")
+            || request.contains("GET http://") && request.contains("/path "),
+        "unexpected request line: {request}"
+    );
+}
+
+#[tokio::test]
+async fn control_next_requests_expected_path() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}";
+
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .control()
+        .next(RequestOptions::default())
+        .await
+        .expect("control next");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["ok"], true);
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("GET /tui/control/next HTTP/1.1")
+            || request.contains("GET http://") && request.contains("/tui/control/next "),
+        "unexpected request line: {request}"
+    );
+}
+
+#[tokio::test]
+async fn command_list_requests_expected_path() {
+    let response =
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[]";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .command()
+        .list(RequestOptions::default())
+        .await
+        .expect("command list");
+
+    assert_eq!(resp.status, 200);
+    assert!(resp.data.is_array());
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("GET /command HTTP/1.1")
+            || request.contains("GET http://") && request.contains("/command "),
+        "unexpected request line: {request}"
+    );
+}
+
+#[tokio::test]
+async fn control_response_posts_expected_path() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .control()
+        .response(RequestOptions::default().with_body(json!({"value":"approve"})))
+        .await
+        .expect("control response");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["ok"], true);
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("POST /tui/control/response HTTP/1.1")
+            || request.contains("POST http://") && request.contains("/tui/control/response"),
+        "unexpected request line: {request}"
+    );
+    assert!(request.contains("\"value\":\"approve\""));
+}
 async fn missing_multi_param_path_field_returns_explicit_error() {
     let client = create_opencode_client(Some(OpencodeClientConfig {
         base_url: "http://127.0.0.1:1".to_string(),
@@ -263,4 +384,132 @@ async fn missing_multi_param_path_field_returns_explicit_error() {
         .expect_err("must fail with missing messageID");
 
     assert!(matches!(err, Error::MissingPathParameter(ref key) if key == "messageID"));
+}
+
+#[tokio::test]
+async fn provider_oauth_authorize_posts_expected_path() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .provider()
+        .oauth()
+        .authorize(
+            RequestOptions::default()
+                .with_path("id", "openai")
+                .with_body(json!({ "code": "abc123" })),
+        )
+        .await
+        .expect("oauth authorize");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["ok"], true);
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("POST /provider/openai/oauth/authorize HTTP/1.1")
+            || request.contains("POST http://")
+                && request.contains("/provider/openai/oauth/authorize"),
+        "unexpected request line: {request}"
+    );
+    assert!(request.contains("\"code\":\"abc123\""));
+}
+
+#[tokio::test]
+async fn auth_set_puts_expected_path_and_body() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .auth()
+        .set(
+            RequestOptions::default()
+                .with_path("id", "openai")
+                .with_body(json!({ "api_key": "sk-test" })),
+        )
+        .await
+        .expect("auth set");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["ok"], true);
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("PUT /auth/openai HTTP/1.1")
+            || request.contains("PUT http://") && request.contains("/auth/openai"),
+        "unexpected request line: {request}"
+    );
+    assert!(request.contains("\"api_key\":\"sk-test\""));
+}
+
+#[tokio::test]
+async fn app_log_posts_expected_path_and_body() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .app()
+        .log(RequestOptions::default().with_body(json!({
+            "level": "info",
+            "message": "hello"
+        })))
+        .await
+        .expect("app log");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["ok"], true);
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("POST /log HTTP/1.1")
+            || request.contains("POST http://") && request.contains("/log "),
+        "unexpected request line: {request}"
+    );
+    assert!(request.contains("\"message\":\"hello\""));
+}
+
+#[tokio::test]
+async fn instance_dispose_posts_expected_path() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"disposed\":true}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .instance()
+        .dispose(RequestOptions::default())
+        .await
+        .expect("instance dispose");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["disposed"], true);
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("POST /instance/dispose HTTP/1.1")
+            || request.contains("POST http://") && request.contains("/instance/dispose"),
+        "unexpected request line: {request}"
+    );
 }

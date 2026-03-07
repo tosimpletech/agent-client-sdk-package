@@ -190,8 +190,20 @@ impl OpencodeClient {
         }
     }
 
+    pub fn app(&self) -> AppApi {
+        AppApi {
+            client: self.clone(),
+        }
+    }
+
     pub fn global(&self) -> GlobalApi {
         GlobalApi {
+            client: self.clone(),
+        }
+    }
+
+    pub fn command(&self) -> CommandApi {
+        CommandApi {
             client: self.clone(),
         }
     }
@@ -204,6 +216,12 @@ impl OpencodeClient {
 
     pub fn project(&self) -> ProjectApi {
         ProjectApi {
+            client: self.clone(),
+        }
+    }
+
+    pub fn path(&self) -> PathApi {
+        PathApi {
             client: self.clone(),
         }
     }
@@ -226,8 +244,26 @@ impl OpencodeClient {
         }
     }
 
+    pub fn provider(&self) -> ProviderApi {
+        ProviderApi {
+            client: self.clone(),
+        }
+    }
+
+    pub fn auth(&self) -> AuthApi {
+        AuthApi {
+            client: self.clone(),
+        }
+    }
+
     pub fn mcp(&self) -> McpApi {
         McpApi {
+            client: self.clone(),
+        }
+    }
+
+    pub fn pty(&self) -> PtyApi {
+        PtyApi {
             client: self.clone(),
         }
     }
@@ -246,6 +282,31 @@ impl OpencodeClient {
 
     pub fn find(&self) -> FindApi {
         FindApi {
+            client: self.clone(),
+        }
+    }
+
+    pub fn instance(&self) -> InstanceApi {
+        InstanceApi {
+            client: self.clone(),
+        }
+    }
+
+    pub fn vcs(&self) -> VcsApi {
+        VcsApi {
+            client: self.clone(),
+        }
+    }
+
+    pub fn tui(&self) -> TuiApi {
+        TuiApi {
+            client: self.clone(),
+        }
+    }
+
+    /// Backward-compatible shorthand for TUI control endpoints.
+    pub fn control(&self) -> ControlApi {
+        ControlApi {
             client: self.clone(),
         }
     }
@@ -367,15 +428,32 @@ impl OpencodeClient {
                         continue;
                     }
 
-                    apply_sse_line(&line, &mut current);
-                }
-            }
+                    if line.starts_with(':') {
+                        continue;
+                    }
 
-            if !buffer.is_empty() {
-                if buffer.ends_with('\r') {
-                    buffer.pop();
+                    let (field, value) = match line.split_once(':') {
+                        Some((f, v)) => (f, v.trim_start()),
+                        None => (line.as_str(), ""),
+                    };
+
+                    match field {
+                        "event" => current.event = Some(value.to_string()),
+                        "id" => current.id = Some(value.to_string()),
+                        "retry" => {
+                            if let Ok(v) = value.parse::<u64>() {
+                                current.retry = Some(v);
+                            }
+                        }
+                        "data" => {
+                            if !current.data.is_empty() {
+                                current.data.push('\n');
+                            }
+                            current.data.push_str(value);
+                        }
+                        _ => {}
+                    }
                 }
-                apply_sse_line(&buffer, &mut current);
             }
 
             if !current.is_empty() {
@@ -398,7 +476,8 @@ impl OpencodeClient {
 
         let mut merged_headers = self.inner.default_headers.clone();
         for (k, v) in &options.headers {
-            let name = HeaderName::from_bytes(k.as_bytes())?;
+            let name = HeaderName::from_bytes(k.as_bytes())
+                .map_err(|e| Error::OpencodeSDK(OpencodeSDKError::new(format!("Invalid header name {k}: {e}"))))?;
             let value = HeaderValue::from_str(v)?;
             merged_headers.insert(name, value);
         }
@@ -715,6 +794,52 @@ impl GlobalApi {
     }
 }
 
+/// App endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct AppApi {
+    client: OpencodeClient,
+}
+
+impl AppApi {
+    pub async fn agents(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("app.agents", options).await
+    }
+
+    pub async fn log(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("app.log", options).await
+    }
+
+    pub async fn skills(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("app.skills", options).await
+    }
+}
+
+/// Command endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct CommandApi {
+    client: OpencodeClient,
+}
+
+impl CommandApi {
+    pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("command.list", options).await
+    }
+}
+
+/// Instance endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct InstanceApi {
+    client: OpencodeClient,
+}
+
+impl InstanceApi {
+    pub async fn dispose(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("instance.dispose", options)
+            .await
+    }
+}
+
 /// Config endpoint namespace.
 #[derive(Debug, Clone)]
 pub struct ConfigApi {
@@ -760,6 +885,18 @@ impl ProjectApi {
         self.client
             .request_json(Method::PATCH, "/project/{projectID}", options)
             .await
+    }
+}
+
+/// Path endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct PathApi {
+    client: OpencodeClient,
+}
+
+impl PathApi {
+    pub async fn get(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("path.get", options).await
     }
 }
 
@@ -811,6 +948,68 @@ impl ToolApi {
     pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::GET, "/experimental/tool", options)
+            .await
+    }
+}
+
+/// Auth endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct AuthApi {
+    client: OpencodeClient,
+}
+
+impl AuthApi {
+    pub async fn set(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("auth.set", options).await
+    }
+
+    pub async fn remove(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("auth.remove", options).await
+    }
+}
+
+/// Provider endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct ProviderApi {
+    client: OpencodeClient,
+}
+
+impl ProviderApi {
+    pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::GET, "/provider", options)
+            .await
+    }
+
+    pub async fn auth(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::GET, "/provider/auth", options)
+            .await
+    }
+
+    pub fn oauth(&self) -> OauthApi {
+        OauthApi {
+            client: self.client.clone(),
+        }
+    }
+}
+
+/// OAuth endpoint namespace under provider routes.
+#[derive(Debug, Clone)]
+pub struct OauthApi {
+    client: OpencodeClient,
+}
+
+impl OauthApi {
+    pub async fn authorize(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::POST, "/provider/{id}/oauth/authorize", options)
+            .await
+    }
+
+    pub async fn callback(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::POST, "/provider/{id}/oauth/callback", options)
             .await
     }
 }
@@ -883,6 +1082,48 @@ impl McpAuthApi {
     }
 }
 
+/// PTY endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct PtyApi {
+    client: OpencodeClient,
+}
+
+impl PtyApi {
+    pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.request_json(Method::GET, "/pty", options).await
+    }
+
+    pub async fn create(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::POST, "/pty", options)
+            .await
+    }
+
+    pub async fn remove(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::DELETE, "/pty/{ptyID}", options)
+            .await
+    }
+
+    pub async fn get(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::GET, "/pty/{ptyID}", options)
+            .await
+    }
+
+    pub async fn update(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::PUT, "/pty/{ptyID}", options)
+            .await
+    }
+
+    pub async fn connect(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .request_json(Method::GET, "/pty/{ptyID}/connect", options)
+            .await
+    }
+}
+
 /// Event endpoint namespace.
 #[derive(Debug, Clone)]
 pub struct EventApi {
@@ -911,6 +1152,109 @@ impl FormatterApi {
     }
 }
 
+/// VCS endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct VcsApi {
+    client: OpencodeClient,
+}
+
+impl VcsApi {
+    pub async fn get(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("vcs.get", options).await
+    }
+}
+
+/// TUI endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct TuiApi {
+    client: OpencodeClient,
+}
+
+impl TuiApi {
+    pub async fn append_prompt(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("tui.appendPrompt", options)
+            .await
+    }
+
+    pub async fn clear_prompt(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("tui.clearPrompt", options).await
+    }
+
+    pub async fn execute_command(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("tui.executeCommand", options)
+            .await
+    }
+
+    pub async fn open_help(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("tui.openHelp", options).await
+    }
+
+    pub async fn open_models(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("tui.openModels", options).await
+    }
+
+    pub async fn open_sessions(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("tui.openSessions", options)
+            .await
+    }
+
+    pub async fn open_themes(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("tui.openThemes", options).await
+    }
+
+    pub async fn publish(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("tui.publish", options).await
+    }
+
+    pub async fn select_session(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("tui.selectSession", options)
+            .await
+    }
+
+    pub async fn show_toast(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("tui.showToast", options).await
+    }
+
+    pub async fn submit_prompt(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("tui.submitPrompt", options)
+            .await
+    }
+
+    pub fn control(&self) -> TuiControlApi {
+        TuiControlApi {
+            client: self.client.clone(),
+        }
+    }
+}
+
+/// TUI control endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct TuiControlApi {
+    client: OpencodeClient,
+}
+
+impl TuiControlApi {
+    pub async fn next(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("tui.control.next", options)
+            .await
+    }
+
+    pub async fn response(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("tui.control.response", options)
+            .await
+    }
+}
+
+/// Backward-compatible alias for top-level control API access.
+pub type ControlApi = TuiControlApi;
+
 fn parse_success_body(bytes: &[u8]) -> Value {
     match serde_json::from_slice::<Value>(bytes) {
         Ok(json) => json,
@@ -931,34 +1275,6 @@ fn headers_to_map(headers: &HeaderMap) -> HashMap<String, String> {
 
 fn encode_component(value: &str) -> String {
     utf8_percent_encode(value, COMPONENT_ENCODE_SET).to_string()
-}
-
-fn apply_sse_line(line: &str, current: &mut SseEvent) {
-    if line.is_empty() || line.starts_with(':') {
-        return;
-    }
-
-    let (field, value) = match line.split_once(':') {
-        Some((f, v)) => (f, v.trim_start()),
-        None => (line, ""),
-    };
-
-    match field {
-        "event" => current.event = Some(value.to_string()),
-        "id" => current.id = Some(value.to_string()),
-        "retry" => {
-            if let Ok(v) = value.parse::<u64>() {
-                current.retry = Some(v);
-            }
-        }
-        "data" => {
-            if !current.data.is_empty() {
-                current.data.push('\n');
-            }
-            current.data.push_str(value);
-        }
-        _ => {}
-    }
 }
 
 fn resolve_path_value<'a>(

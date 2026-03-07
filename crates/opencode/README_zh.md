@@ -8,7 +8,7 @@
 - 启停 OpenCode TUI：`create_opencode_tui`
 - 创建 OpenCode HTTP 客户端：`create_opencode_client`
 - 一体化启动：`create_opencode`（返回 server + client）
-- 提供 `session/global/project/event/lsp` 常用接口封装
+- 提供 `session/app/instance/global/project/provider/auth/oauth/event/lsp/pty/tui/control` 常用接口封装
 - 支持按 `operationId` 通用调用：`call_operation` / `call_operation_sse`
 
 ## 安装
