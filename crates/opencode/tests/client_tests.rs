@@ -254,6 +254,34 @@ async fn tui_submit_prompt_posts_expected_path_and_body() {
 }
 
 #[tokio::test]
+async fn path_get_requests_expected_path() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"cwd\":\"/tmp\"}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .path()
+        .get(RequestOptions::default())
+        .await
+        .expect("path get");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["cwd"], "/tmp");
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("GET /path HTTP/1.1")
+            || request.contains("GET http://") && request.contains("/path "),
+        "unexpected request line: {request}"
+    );
+}
+
+#[tokio::test]
 async fn missing_multi_param_path_field_returns_explicit_error() {
     let client = create_opencode_client(Some(OpencodeClientConfig {
         base_url: "http://127.0.0.1:1".to_string(),

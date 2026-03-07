@@ -208,6 +208,12 @@ impl OpencodeClient {
         }
     }
 
+    pub fn path(&self) -> PathApi {
+        PathApi {
+            client: self.clone(),
+        }
+    }
+
     pub fn file(&self) -> FileApi {
         FileApi {
             client: self.clone(),
@@ -808,6 +814,18 @@ impl ProjectApi {
         self.client
             .request_json(Method::PATCH, "/project/{projectID}", options)
             .await
+    }
+}
+
+/// Path endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct PathApi {
+    client: OpencodeClient,
+}
+
+impl PathApi {
+    pub async fn get(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("path.get", options).await
     }
 }
 

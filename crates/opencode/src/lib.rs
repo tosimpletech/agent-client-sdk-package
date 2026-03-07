@@ -13,8 +13,8 @@ pub mod types;
 
 pub use client::{
     ApiResponse, AuthApi, EventApi, GlobalApi, LspApi, OauthApi, OpencodeClient,
-    OpencodeClientConfig, ProjectApi, ProviderApi, PtyApi, RequestOptions, SessionApi, TuiApi,
-    TuiControlApi, create_opencode_client,
+    OpencodeClientConfig, PathApi, ProjectApi, ProviderApi, PtyApi, RequestOptions, SessionApi,
+    TuiApi, TuiControlApi, create_opencode_client,
 };
 pub use errors::{Error, Result};
 pub use server::{
