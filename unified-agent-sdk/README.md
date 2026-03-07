@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
   - `ProfileManager`, `ProfileId`, `ExecutorConfig`
   - Runtime discovery via `discover`, merged config via `resolve`
 - Sessions and events
-  - `AgentSession` for session metadata and stream pipeline
+  - `AgentSession` for session metadata, lifecycle controls (`wait`/`cancel`), and stream pipeline
   - `AgentEvent`, `EventStream`, `HookManager`
 - Normalization
   - `CodexLogNormalizer`, `ClaudeCodeLogNormalizer`

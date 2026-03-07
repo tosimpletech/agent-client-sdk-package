@@ -9,7 +9,7 @@ use codex::{ApprovalMode, Codex, CodexOptions, ModelReasoningEffort, Thread, Thr
 use crate::{
     error::{ExecutorError, Result},
     executor::{AgentCapabilities, AgentExecutor, AvailabilityStatus, SpawnConfig},
-    session::AgentSession,
+    session::{AgentSession, register_completed_session},
     types::{ExecutorType, PermissionPolicy},
 };
 
@@ -87,6 +87,14 @@ impl CodexExecutor {
                     "codex did not return a thread id after running prompt",
                 )
             })?;
+
+        register_completed_session(
+            session_id.clone(),
+            crate::types::ExitStatus {
+                code: None,
+                success: true,
+            },
+        );
 
         Ok(AgentSession {
             session_id,
