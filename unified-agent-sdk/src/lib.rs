@@ -14,9 +14,6 @@
 //!
 //! # Supported Agents
 //!
-//! Add new provider support by appending one row in this table first, so provider
-//! inventory stays centralized and easy to maintain.
-//!
 //! | Agent | `ExecutorType` | Executor Adapter | Log Normalizer | Profile Discovery |
 //! | --- | --- | --- | --- | --- |
 //! | Claude Code | `ExecutorType::ClaudeCode` | [`ClaudeCodeExecutor`] | [`ClaudeCodeLogNormalizer`] | `providers::claude_code::profile` |
