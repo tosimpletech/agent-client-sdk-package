@@ -18,6 +18,11 @@ const REASONING_COMMANDS: &[&[&str]] = &[
     &["reasoning", "list"],
 ];
 
+/// Discovers Codex models and reasoning levels from the Codex CLI.
+///
+/// Discovery is best-effort and gracefully degrades when the CLI is missing or does
+/// not expose structured output. In degraded mode, model list is empty and reasoning
+/// falls back to known defaults.
 pub async fn discover() -> DiscoveryData {
     let codex_program = match CodexExec::new(None, None, None) {
         Ok(exec) => exec.executable_path().to_string(),
@@ -25,7 +30,7 @@ pub async fn discover() -> DiscoveryData {
             return DiscoveryData {
                 models: Vec::new(),
                 reasoning_levels: default_reasoning_levels(),
-            }
+            };
         }
     };
 

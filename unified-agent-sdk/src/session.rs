@@ -1,4 +1,8 @@
-//! Session management
+//! Session management primitives.
+//!
+//! [`AgentSession`] is a lightweight handle returned by executor `spawn`/`resume`
+//! operations. It exposes metadata helpers and a streaming pipeline that converts
+//! provider raw logs into unified [`crate::event::AgentEvent`] values.
 
 use chrono::{DateTime, Utc};
 use futures::{Stream, StreamExt, stream};
@@ -17,7 +21,7 @@ use crate::{
 /// Raw log stream emitted by an executor process.
 pub type RawLogStream = Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>;
 
-/// Session metadata for persistence
+/// Serializable metadata snapshot for persistence or resume bookkeeping.
 #[derive(Debug, Clone)]
 pub struct SessionMetadata {
     /// Executor session identifier.
@@ -34,7 +38,7 @@ pub struct SessionMetadata {
     pub context_window_override_tokens: Option<u32>,
 }
 
-/// Session resume information
+/// Session resume descriptor used by higher-level orchestrators.
 #[derive(Debug, Clone)]
 pub struct SessionResume {
     /// Existing session identifier.
@@ -43,7 +47,10 @@ pub struct SessionResume {
     pub reset_to_message: Option<String>,
 }
 
-/// Active agent session
+/// Active agent session handle.
+///
+/// This value is intentionally lightweight and provider-agnostic. It does not own
+/// subprocess handles directly in the current implementation.
 pub struct AgentSession {
     /// Executor session identifier.
     pub session_id: String,

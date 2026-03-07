@@ -18,6 +18,11 @@ const REASONING_COMMANDS: &[&[&str]] = &[
     &["effort", "list"],
 ];
 
+/// Discovers Claude Code models and reasoning levels from the Claude CLI.
+///
+/// Discovery is best-effort and gracefully degrades when the CLI is missing or
+/// probing commands fail. In degraded mode, model list is empty and reasoning
+/// falls back to known defaults.
 pub async fn discover() -> DiscoveryData {
     let claude_program = match resolve_cli_path() {
         Some(path) => path,
@@ -25,7 +30,7 @@ pub async fn discover() -> DiscoveryData {
             return DiscoveryData {
                 models: Vec::new(),
                 reasoning_levels: default_reasoning_levels(),
-            }
+            };
         }
     };
 

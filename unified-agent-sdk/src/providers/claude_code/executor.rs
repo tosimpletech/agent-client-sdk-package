@@ -23,6 +23,21 @@ const MAX_TRACKED_SESSIONS: usize = 64;
 static FALLBACK_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Executor adapter backed by `claude_code::ClaudeSdkClient`.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use unified_agent_sdk::{AgentExecutor, ClaudeCodeExecutor, executor::SpawnConfig};
+///
+/// # async fn run() -> unified_agent_sdk::Result<()> {
+/// let executor = ClaudeCodeExecutor::new();
+/// let cwd = std::env::current_dir()?;
+/// let _session = executor
+///     .spawn(&cwd, "Review this project architecture.", &SpawnConfig::default())
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone)]
 pub struct ClaudeCodeExecutor {
     base_options: ClaudeAgentOptions,
@@ -36,6 +51,8 @@ impl ClaudeCodeExecutor {
     }
 
     /// Creates an executor with pre-configured Claude SDK options.
+    ///
+    /// Per-session settings from [`SpawnConfig`] still take precedence at runtime.
     pub fn with_options(options: ClaudeAgentOptions) -> Self {
         Self {
             base_options: options,
