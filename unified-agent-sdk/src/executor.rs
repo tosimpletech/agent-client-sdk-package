@@ -1,7 +1,9 @@
-//! Agent executor abstraction.
+//! Provider-agnostic session execution contract.
 //!
-//! This module defines the provider-agnostic execution contract used by the SDK.
-//! Concrete implementations live under [`crate::providers`].
+//! [`AgentExecutor`] is intentionally narrow: start a session, resume a session,
+//! report capabilities, and report availability. Provider-specific advanced
+//! controls remain in the underlying SDK crates so the unified surface stays
+//! predictable.
 
 use async_trait::async_trait;
 use std::path::Path;
@@ -9,6 +11,9 @@ use std::path::Path;
 use crate::{error::Result, session::AgentSession, types::ExecutorType};
 
 /// Capability declaration for one executor implementation.
+///
+/// Use this to detect optional behavior before relying on it in higher-level
+/// orchestration code.
 #[derive(Debug, Clone)]
 pub struct AgentCapabilities {
     /// Whether the executor can fork from an existing session history.
@@ -22,6 +27,9 @@ pub struct AgentCapabilities {
 }
 
 /// Runtime availability state for an executor backend.
+///
+/// This is intended for preflight checks such as “is the provider CLI installed
+/// and usable in the current environment?”.
 #[derive(Debug, Clone)]
 pub struct AvailabilityStatus {
     /// Whether the executor is currently available.
@@ -30,7 +38,26 @@ pub struct AvailabilityStatus {
     pub reason: Option<String>,
 }
 
-/// Session spawn/resume configuration.
+/// Runtime configuration applied when spawning or resuming a session.
+///
+/// Values in this struct are unified overrides. Each executor translates them to
+/// provider-specific settings at call time.
+///
+/// # Examples
+///
+/// ```rust
+/// use unified_agent_sdk::{PermissionPolicy, executor::SpawnConfig};
+///
+/// let config = SpawnConfig {
+///     model: Some("gpt-5-codex".to_string()),
+///     reasoning: Some("medium".to_string()),
+///     permission_policy: Some(PermissionPolicy::Prompt),
+///     env: vec![("RUST_LOG".to_string(), "debug".to_string())],
+///     context_window_override_tokens: Some(128_000),
+/// };
+///
+/// assert_eq!(config.context_window_override_tokens, Some(128_000));
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct SpawnConfig {
     /// Optional model override.

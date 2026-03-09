@@ -1,13 +1,19 @@
-//! Log normalization
+//! Provider log normalization primitives.
+//!
+//! Executors emit provider-specific raw output. A [`LogNormalizer`] converts that
+//! output into [`NormalizedLog`] values so the rest of the SDK can operate on one
+//! stable event model.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::types::{Role, ToolStatus};
 
-/// Normalized log entry
+/// Provider-agnostic log entry produced by a [`LogNormalizer`].
 ///
-/// This enum is intentionally non-exhaustive for forward compatibility.
+/// Normalized logs are an intermediate representation between raw provider output
+/// and higher-level [`crate::event::AgentEvent`] values. The enum is intentionally
+/// non-exhaustive for forward compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[non_exhaustive]
@@ -51,9 +57,11 @@ pub enum NormalizedLog {
     },
 }
 
-/// Tool action type
+/// Best-effort classification of the action a tool update represents.
 ///
-/// This enum is intentionally non-exhaustive for forward compatibility.
+/// This metadata is useful when downstream consumers want to distinguish file,
+/// command, web, or MCP activity without parsing provider-specific payloads. The
+/// enum is intentionally non-exhaustive for forward compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action")]
 #[non_exhaustive]
@@ -87,11 +95,14 @@ pub enum ActionType {
     AskUser,
 }
 
-/// Log normalizer trait
+/// Trait implemented by provider adapters that translate raw output into [`NormalizedLog`] values.
+///
+/// Normalizers may buffer partial chunks internally. Call [`LogNormalizer::flush`]
+/// when the raw stream ends to emit any trailing state.
 pub trait LogNormalizer: Send {
-    /// Process raw log chunk and return normalized logs
+    /// Processes one raw output chunk and returns any normalized records derived from it.
     fn normalize(&mut self, chunk: &[u8]) -> Vec<NormalizedLog>;
 
-    /// Flush any buffered state
+    /// Flushes any buffered state after the upstream raw stream has ended.
     fn flush(&mut self) -> Vec<NormalizedLog>;
 }

@@ -1,8 +1,9 @@
-//! Session management primitives.
+//! Session handles, metadata, and event-stream construction.
 //!
-//! [`AgentSession`] is a lightweight handle returned by executor `spawn`/`resume`
-//! operations. It exposes metadata helpers and a streaming pipeline that converts
-//! provider raw logs into unified [`crate::event::AgentEvent`] values.
+//! [`AgentSession`] is a lightweight value returned by [`crate::executor::AgentExecutor`].
+//! It stores stable metadata and exposes a raw-log to unified-event pipeline.
+//! The event pipeline automatically emits `SessionStarted` and `SessionCompleted`
+//! around the normalized provider events.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -19,10 +20,12 @@ use crate::{
     types::{ExecutorType, ExitStatus},
 };
 
-/// Raw log stream emitted by an executor process.
+/// Raw byte stream emitted by an executor process or test fixture.
+///
+/// Each provider normalizer decides how to split and buffer these chunks.
 pub type RawLogStream = Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>;
 
-/// Serializable metadata snapshot for persistence or resume bookkeeping.
+/// Serializable metadata snapshot for persistence, resume bookkeeping, or diagnostics.
 #[derive(Debug, Clone)]
 pub struct SessionMetadata {
     /// Executor session identifier.
@@ -39,7 +42,7 @@ pub struct SessionMetadata {
     pub context_window_override_tokens: Option<u32>,
 }
 
-/// Session resume descriptor used by higher-level orchestrators.
+/// Resume descriptor used by higher-level orchestrators or persistence layers.
 #[derive(Debug, Clone)]
 pub struct SessionResume {
     /// Existing session identifier.
@@ -50,8 +53,9 @@ pub struct SessionResume {
 
 /// Active agent session handle.
 ///
-/// This value is intentionally lightweight and provider-agnostic. It does not own
-/// subprocess handles directly in the current implementation.
+/// This value is intentionally lightweight and provider-agnostic. It stores stable
+/// metadata and a lifecycle controller abstraction, but does not expose provider-
+/// specific client internals.
 pub struct AgentSession {
     /// Executor session identifier.
     pub session_id: String,
@@ -203,7 +207,7 @@ impl AgentSession {
         EventStream::new(Box::pin(stream))
     }
 
-    /// Returns immutable metadata snapshot for the session.
+    /// Returns an immutable metadata snapshot for persistence or logging.
     pub fn metadata(&self) -> SessionMetadata {
         SessionMetadata {
             session_id: self.session_id.clone(),
@@ -216,11 +220,16 @@ impl AgentSession {
     }
 
     /// Waits for session completion and returns a summarized exit status.
+    ///
+    /// Detached sessions created from metadata return immediately because there is
+    /// no live provider process attached to them.
     pub async fn wait(&mut self) -> Result<ExitStatus> {
         self.lifecycle_controller.wait().await
     }
 
     /// Requests cancellation of the active session.
+    ///
+    /// Detached sessions treat cancellation as a no-op.
     pub async fn cancel(&mut self) -> Result<()> {
         self.lifecycle_controller.cancel().await
     }

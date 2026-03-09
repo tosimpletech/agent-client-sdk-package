@@ -1,13 +1,20 @@
-//! Error types
+//! Typed errors used by the unified SDK.
+//!
+//! [`ExecutorError`] is designed to preserve the phase of failure: configuration,
+//! spawn, execution, session lookup, availability, or serialization. This keeps
+//! orchestration code explicit and easier to recover from.
 
 use std::fmt;
 
 use thiserror::Error;
 
-/// Result type used by the unified executor APIs.
+/// Convenience result alias used by the unified executor APIs.
 pub type Result<T> = std::result::Result<T, ExecutorError>;
 
-/// Error type for executor lifecycle, transport, and normalization failures.
+/// Error type for executor lifecycle, transport, session, and normalization failures.
+///
+/// The variants are intentionally coarse enough to stay stable across providers,
+/// while still allowing callers to branch on the failure phase.
 #[derive(Error, Debug)]
 pub enum ExecutorError {
     /// Underlying I/O error while interacting with local files or subprocess pipes.
@@ -45,6 +52,9 @@ pub enum ExecutorError {
 
 impl ExecutorError {
     /// Returns a stable machine-readable error category.
+    ///
+    /// This is useful when logging or exporting metrics across different provider
+    /// backends without depending on formatted error messages.
     pub fn error_type(&self) -> &'static str {
         match self {
             ExecutorError::Io(_) => "io",
