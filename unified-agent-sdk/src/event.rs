@@ -1,4 +1,8 @@
-//! Event system and hooks
+//! Unified event stream and hook system.
+//!
+//! Raw provider output is first normalized into [`crate::log::NormalizedLog`] and
+//! then converted into [`AgentEvent`] values. Hooks attach side effects to those
+//! events without coupling orchestration code to provider-specific formats.
 
 use futures::{Stream, future::join_all};
 use serde::{Deserialize, Serialize};
@@ -13,7 +17,10 @@ use crate::types::{ContextUsage, ExitStatus, Role};
 pub mod converter;
 
 pub use converter::{EventConverter, normalized_log_to_event};
-/// Agent event types
+/// Unified event emitted from a session event stream.
+///
+/// These events form the stable, provider-agnostic surface most callers should
+/// consume instead of raw provider logs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AgentEvent {
@@ -81,7 +88,7 @@ pub enum AgentEvent {
     },
 }
 
-/// Event type for filtering
+/// Static discriminator used to register and look up event hooks efficiently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventType {
     /// Filter for [`AgentEvent::SessionStarted`].
@@ -127,14 +134,17 @@ impl AgentEvent {
     }
 }
 
-/// Event hook callback
+/// Asynchronous callback invoked for a matching [`AgentEvent`].
+///
+/// Hooks receive a borrowed event so they can inspect it without additional
+/// cloning. They are executed concurrently by [`HookManager::trigger`].
 pub type EventHook = Arc<
     dyn for<'event> Fn(&'event AgentEvent) -> Pin<Box<dyn Future<Output = ()> + Send + 'event>>
         + Send
         + Sync,
 >;
 
-/// Hook manager
+/// Registry for asynchronous hooks keyed by [`EventType`].
 pub struct HookManager {
     hooks: RwLock<HashMap<EventType, Vec<EventHook>>>,
 }
@@ -198,7 +208,9 @@ impl Default for HookManager {
     }
 }
 
-/// Event stream
+/// Thin wrapper around a `Stream<Item = AgentEvent>` used by the unified SDK.
+///
+/// The wrapper gives the crate one stable concrete type to expose in public APIs.
 pub struct EventStream {
     inner: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
 }

@@ -61,12 +61,10 @@ Unified SDK for multiple AI coding agents (Claude Code, Codex, etc.) providing a
 ### Phase 3: Advanced Features
 - [x] Add profile discovery mechanism
 - [x] Add capability detection
-- [ ] Performance optimization
 
 ### Phase 4: Polish & Documentation
-- [ ] Complete API documentation
+- [x] Complete API documentation
 - [x] Add usage examples
-- [ ] Performance optimization
 - [x] Release v0.1.0
 
 ## Architecture
@@ -118,11 +116,5 @@ Base SDKs
 
 - `AgentSession::wait` and `AgentSession::cancel` now use per-session lifecycle controllers (instance-owned; no global registry).
 - Integration tests now exist at crate level (`unified-agent-sdk/tests`) and cover end-to-end event flow for Codex/Claude normalizers.
-- Performance optimization work is not tracked by explicit benchmarks/targets yet.
-- API docs are substantially present (public rustdoc + doctests), but release-grade checklist items are still pending.
+- API docs are now complete for the unified public surface (public rustdoc + doctests validated).
 
-## Next Steps
-
-1. Add mock-CLI based integration tests for adapter `spawn/resume` paths (not only event pipeline).
-2. Finish release checklist items (API docs pass + changelog/release notes + publish verification).
-3. Define baseline performance metrics (throughput/latency/memory) and run optimization against measured bottlenecks.

@@ -1,8 +1,15 @@
-//! Core type definitions
+//! Core public types shared across unified executors, sessions, and events.
+//!
+//! These types are intentionally provider-agnostic. They model concepts that stay
+//! stable even when the backing agent changes from Codex to Claude Code or future
+//! providers.
 
 use serde::{Deserialize, Serialize};
 
-/// Executor type identifier
+/// Provider identifier used throughout the unified SDK.
+///
+/// This enum is used in profile resolution, session metadata, and executor
+/// selection logic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ExecutorType {
     /// Anthropic Claude Code executor backend.
@@ -11,7 +18,7 @@ pub enum ExecutorType {
     Codex,
 }
 
-/// Message role
+/// Logical role associated with a normalized message event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Role {
     /// End-user message.
@@ -22,7 +29,7 @@ pub enum Role {
     System,
 }
 
-/// Tool execution status
+/// High-level lifecycle state for a tool call after normalization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolStatus {
     /// Tool call has started.
@@ -35,7 +42,10 @@ pub enum ToolStatus {
     Failed,
 }
 
-/// Permission policy
+/// Provider-agnostic permission behavior requested by the caller.
+///
+/// Each executor maps this enum to its provider-specific approval or sandboxing
+/// model. Unsupported combinations are surfaced as configuration errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PermissionPolicy {
     /// Automatically allow tool execution without prompts.
@@ -46,7 +56,7 @@ pub enum PermissionPolicy {
     Deny,
 }
 
-/// Source used to determine context window capacity.
+/// Source used to determine the context-window capacity reported in [`ContextUsage`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContextUsageSource {
     /// Window capacity reported directly by the underlying SDK/CLI stream.
@@ -57,7 +67,27 @@ pub enum ContextUsageSource {
     Unknown,
 }
 
-/// Unified context window usage snapshot.
+/// Unified context-window usage snapshot emitted through [`crate::event::AgentEvent::ContextUsageUpdated`].
+///
+/// Use this value when you need consistent usage telemetry across different
+/// providers. If a provider does not report a context limit directly, the SDK may
+/// derive it from `SpawnConfig::context_window_override_tokens`.
+///
+/// # Examples
+///
+/// ```rust
+/// use unified_agent_sdk::{ContextUsage, ContextUsageSource};
+///
+/// let usage = ContextUsage {
+///     used_tokens: 1200,
+///     window_tokens: Some(8000),
+///     remaining_tokens: Some(6800),
+///     utilization: Some(0.15),
+///     source: ContextUsageSource::ProviderReported,
+/// };
+///
+/// assert_eq!(usage.remaining_tokens, Some(6800));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ContextUsage {
     /// Tokens currently consumed in the active context snapshot.
@@ -72,7 +102,10 @@ pub struct ContextUsage {
     pub source: ContextUsageSource,
 }
 
-/// Process exit status
+/// Exit summary for a spawned or resumed unified session.
+///
+/// This is intentionally simpler than provider-native process state. It captures
+/// the information most callers need for orchestration and persistence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExitStatus {
     /// Numeric exit code if available.
