@@ -103,3 +103,24 @@ async fn claude_pipeline_emits_message_and_usage_events() {
         Some(AgentEvent::SessionCompleted { exit_status }) if exit_status.success
     ));
 }
+
+#[tokio::test]
+async fn claude_pipeline_marks_session_failed_on_malformed_input() {
+    let session = test_session("claude-malformed", ExecutorType::ClaudeCode);
+    let raw_logs: RawLogStream = Box::pin(stream::iter(vec![b"{not-json}\n".to_vec()]));
+
+    let events = session
+        .event_stream(raw_logs, Box::new(ClaudeCodeLogNormalizer::new()), None)
+        .collect::<Vec<_>>()
+        .await;
+
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ErrorOccurred { .. }))
+    );
+    assert!(matches!(
+        events.last(),
+        Some(AgentEvent::SessionCompleted { exit_status }) if !exit_status.success
+    ));
+}
