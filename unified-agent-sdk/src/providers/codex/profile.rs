@@ -1,6 +1,6 @@
 //! Codex profile discovery.
 
-use codex::{CodexExec, ModelReasoningEffort};
+use codex::ModelReasoningEffort;
 
 use crate::profile::DiscoveryData;
 
@@ -24,8 +24,8 @@ const REASONING_COMMANDS: &[&[&str]] = &[
 /// not expose structured output. In degraded mode, model list is empty and reasoning
 /// falls back to known defaults.
 pub async fn discover() -> DiscoveryData {
-    let codex_program = match CodexExec::new(None, None, None) {
-        Ok(exec) => exec.executable_path().to_string(),
+    let codex_program = match which::which("codex") {
+        Ok(path) => path.to_string_lossy().into_owned(),
         Err(_) => {
             return DiscoveryData {
                 models: Vec::new(),
