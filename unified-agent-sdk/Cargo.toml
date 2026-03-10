@@ -5,6 +5,9 @@ edition = "2024"
 authors = ["Vibe Kanban Contributors"]
 description = "Unified SDK for multiple AI coding agents"
 license = "Apache-2.0"
+repository = "https://github.com/tosimpletech/agent-client-sdk-package"
+homepage = "https://github.com/tosimpletech/agent-client-sdk-package"
+documentation = "https://docs.rs/unified-agent-sdk"
 
 [dependencies]
 async-trait = "0.1"
@@ -15,6 +18,6 @@ serde_json = "1"
 thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 pin-project = "1"
-claude-code-client-sdk = { path = "../crates/claude-code" }
+claude-code-client-sdk = { version = "=0.1.46", path = "../crates/claude-code" }
 which = { workspace = true }
-codex = { package = "codex-client-sdk", path = "../crates/codex" }
+codex = { package = "codex-client-sdk", version = "=0.107.0", path = "../crates/codex" }

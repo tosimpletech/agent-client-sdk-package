@@ -33,11 +33,9 @@ It is designed to keep integration code stable while switching agent backends.
 
 ## Installation
 
-This repository currently uses a workspace/local package layout.
-
 ```toml
 [dependencies]
-unified-agent-sdk = { path = "../unified-agent-sdk" }
+unified-agent-sdk = "0.1.0"
 ```
 
 Runtime prerequisites:
