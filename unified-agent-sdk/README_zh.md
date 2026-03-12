@@ -2,50 +2,50 @@
 
 [English](README.md) | [中文](README_zh.md)
 
-Unified Rust SDK that provides one interface for multiple coding agents.
+统一的 Rust SDK，为多个 coding agent 提供同一套接入接口。
 
-## Table of Contents
+## 目录
 
-- [Overview](#overview)
-- [Supported Providers](#supported-providers)
-- [Installation](#installation)
-- [Quickstart](#quickstart)
-- [API Overview](#api-overview)
-- [Examples](#examples)
-- [License](#license)
+- [概览](#概览)
+- [支持的 Provider](#支持的-provider)
+- [安装](#安装)
+- [快速开始](#快速开始)
+- [API 概览](#api-概览)
+- [示例](#示例)
+- [许可证](#许可证)
 
-## Overview
+## 概览
 
-`unified-agent-sdk` offers:
+`unified-agent-sdk` 提供：
 
-- A shared executor interface (`AgentExecutor`) across providers
-- Provider-based architecture: each SDK encapsulates executor and normalizer in independent modules
-- Profile/config resolution (`ProfileManager`)
-- Unified event and log normalization pipeline (`AgentEvent`, `LogNormalizer`)
-- Context usage signaling with optional capacity/remaining metadata (`ContextUsageUpdated`)
+- 统一的执行器接口 `AgentExecutor`，屏蔽不同 provider 的调用差异
+- 基于 provider 的模块化架构：每个 SDK 在独立模块中封装 executor 和 normalizer
+- 配置与 profile 解析能力（`ProfileManager`）
+- 统一事件与日志归一化流水线（`AgentEvent`、`LogNormalizer`）
+- 上下文使用量信号，支持可选的总容量与剩余容量元数据（`ContextUsageUpdated`）
 
-It is designed to keep integration code stable while switching agent backends.
+它的目标是在切换 agent 后端时，尽可能保持上层集成代码稳定。
 
-## Supported Providers
+## 支持的 Provider
 
-| Provider | Executor | CLI Required |
-|----------|----------|--------------|
+| Provider | 执行器 | 依赖 CLI |
+| --- | --- | --- |
 | Codex | `CodexExecutor` | `codex` |
 | Claude Code | `ClaudeCodeExecutor` | `claude` |
 
-## Installation
+## 安装
 
 ```toml
 [dependencies]
 unified-agent-sdk = "0.1.0"
 ```
 
-Runtime prerequisites:
+运行前提：
 
-- Rust 1.85+ (edition 2024)
-- Installed agent CLIs (`codex` and/or `claude`)
+- Rust 1.85+（edition 2024）
+- 已安装所需 agent CLI（`codex` 和/或 `claude`）
 
-## Quickstart
+## 快速开始
 
 ```rust,no_run
 use unified_agent_sdk::{
@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
 
     let working_dir = std::env::current_dir()?;
     let session = executor
-        .spawn(&working_dir, "Summarize this repository in 3 bullets.", &config)
+        .spawn(&working_dir, "用 3 个要点总结这个仓库。", &config)
         .await?;
 
     println!("session_id: {}", session.session_id);
@@ -74,24 +74,24 @@ async fn main() -> Result<()> {
 }
 ```
 
-## API Overview
+## API 概览
 
-- Executors
-  - `AgentExecutor` trait: `spawn`, `resume`, `capabilities`, `availability`
-  - Implementations: `CodexExecutor`, `ClaudeCodeExecutor`
+- 执行器
+  - `AgentExecutor` trait：`spawn`、`resume`、`capabilities`、`availability`
+  - 实现类型：`CodexExecutor`、`ClaudeCodeExecutor`
 - Profiles
-  - `ProfileManager`, `ProfileId`, `ExecutorConfig`
-  - Runtime discovery via `discover`, merged config via `resolve`
-- Sessions and events
-  - `AgentSession` for session metadata, lifecycle controls (`wait`/`cancel`), and stream pipeline
-  - `AgentEvent`, `EventStream`, `HookManager`
-- Normalization
-  - `CodexLogNormalizer`, `ClaudeCodeLogNormalizer`
-  - `LogNormalizer` trait for custom adapters
+  - `ProfileManager`、`ProfileId`、`ExecutorConfig`
+  - 通过 `discover` 发现运行时配置，通过 `resolve` 获取合并后的配置
+- 会话与事件
+  - `AgentSession`：封装会话元信息、生命周期控制（`wait` / `cancel`）和事件流
+  - `AgentEvent`、`EventStream`、`HookManager`
+- 归一化
+  - `CodexLogNormalizer`、`ClaudeCodeLogNormalizer`
+  - `LogNormalizer` trait，可扩展自定义适配器
 
-## Examples
+## 示例
 
-### Resume an existing session
+### 恢复已有会话
 
 ```rust,no_run
 use unified_agent_sdk::{
@@ -112,13 +112,13 @@ async fn main() -> Result<()> {
 
     let working_dir = std::env::current_dir()?;
     let first = executor
-        .spawn(&working_dir, "Create a TODO list for this codebase.", &config)
+        .spawn(&working_dir, "为这个代码库整理一份 TODO 列表。", &config)
         .await?;
 
     let resumed = executor
         .resume(
             &working_dir,
-            "Now prioritize the TODO list.",
+            "现在给这份 TODO 列表排优先级。",
             &first.session_id,
             None,
             &config,
@@ -130,7 +130,7 @@ async fn main() -> Result<()> {
 }
 ```
 
-### Resolve profile + overrides
+### 解析 profile 并应用覆盖项
 
 ```rust,no_run
 use unified_agent_sdk::{
@@ -153,6 +153,6 @@ async fn main() -> Result<()> {
 }
 ```
 
-## License
+## 许可证
 
-Licensed under the [Apache License, Version 2.0](../LICENSE).
+采用 [Apache License, Version 2.0](../LICENSE) 许可证。
