@@ -42,6 +42,7 @@ Rust workspace containing parity-focused client SDK crates and a unified abstrac
 ├── unified-agent-sdk
 │   ├── src/
 │   ├── README.md
+│   ├── README_zh.md
 │   └── ROADMAP.md
 └── LICENSE
 ```
