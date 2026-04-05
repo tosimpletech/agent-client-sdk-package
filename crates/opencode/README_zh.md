@@ -25,19 +25,19 @@
 
 ## 概览
 
-该 crate 是一个以能力对齐为目标的 Rust 实现，行为上对齐官方 OpenCode SDK（`@opencode-ai/sdk` `v1.2.20`），同时保持 Rust 风格的 API 设计。
+该 crate 是一个以能力对齐为目标的 Rust 实现，行为上对齐官方 OpenCode SDK（`@opencode-ai/sdk` `v1.3.0`），同时保持 Rust 风格的 API 设计。
 
 支持能力：
 
 - 本地服务生命周期管理（`create_opencode_server`、`create_opencode`）
 - TUI 进程生命周期管理（`create_opencode_tui`）
-- 命名空间客户端入口（`session`、`global`、`project`、`provider`、`mcp`、`tui` 等）
+- 命名空间客户端入口（`session`、`global`、`project`、`workspace`、`worktree`、`question`、`provider`、`mcp`、`tui` 等）
 - 按 `operationId` 的通用调用（`call_operation`、`call_operation_sse`）
 - 稳健 SSE 解析（支持 UTF-8 跨 chunk 与尾行未空行终止场景）
 
 ## 状态
 
-- 版本：`1.2.20`（`opencode-client-sdk`）
+- 版本：`1.3.0`（`opencode-client-sdk`）
 - 范围：覆盖 OpenCode CLI server + SDK HTTP 核心工作流的对齐实现
 - 验证：维护了基于 fixture 的子进程与 HTTP/SSE 测试
 - 文档：公开 API 已通过 `opencode` 导出并补充 rustdoc
@@ -173,8 +173,10 @@ while let Some(event) = stream.next().await {
   - `OpencodeClient::call_operation`
   - `OpencodeClient::call_operation_sse`
 - 命名空间接口
-  - `SessionApi`、`GlobalApi`、`AppApi`、`ProjectApi`、`ProviderApi`、`AuthApi`、`OauthApi`
+  - `SessionApi`、`GlobalApi`、`AppApi`、`ProjectApi`、`ProviderApi`、`AuthApi`、`OauthApi`、`QuestionApi`
   - `FindApi`、`FileApi`、`PathApi`、`LspApi`、`ToolApi`、`CommandApi`、`ConfigApi`、`FormatterApi`、`VcsApi`、`InstanceApi`
+  - `WorkspaceApi`、`ResourceApi`、`WorktreeApi`、`ExperimentalApi`、`ExperimentalSessionApi`
+  - `PartApi`、`PermissionApi`
   - `McpApi`、`McpAuthApi`、`PtyApi`、`EventApi`、`TuiApi`、`TuiControlApi`（`ControlApi` 别名）
 - 输入辅助类型
   - `SessionCreateInput`
@@ -186,6 +188,8 @@ while let Some(event) = stream.next().await {
 - 路径参数解析兼容 OpenCode 命名变体（`sessionID` / `messageID` / snake_case）
 - 多参数路径的 `id` 回退更安全（避免误替换）
 - SSE 解析覆盖常见流式边界问题
+- client config 对齐 `x-opencode-directory` 与 `x-opencode-workspace`
+- 补齐 `v1.3.0` 的 `global.upgrade`、`project.init_git`、`file.status`、`question` 以及实验性 workspace/resource/worktree 接口
 - 结构化错误模型（SDK/HTTP/进程/CLI-not-found）
 - 基于 fixture 的测试覆盖 CLI 参数/环境透传、HTTP 路径、SSE 解析等场景
 
@@ -197,7 +201,7 @@ while let Some(event) = stream.next().await {
 | 命名空间接口调用 | ✅ | ✅ | 表面能力一致，命名为 Rust 风格 |
 | operation-id 通用调用 | ✅ | ✅ | `call_operation` 以对齐为目标 |
 | SSE 事件订阅 | ✅ | ✅ | Rust 返回 `futures::Stream<SseEvent>` |
-| 目录请求头支持 | ✅ | ✅ | 自动附加 `x-opencode-directory` |
+| 目录/工作区请求头支持 | ✅ | ✅ | 自动附加 `x-opencode-directory` 与 `x-opencode-workspace` |
 | 错误模型 | JS Error 对象 | ✅（`Error` enum） | Rust 采用显式类型错误 |
 | 核心 SDK 工作流 | ✅ | ✅ | 核心行为已对齐 |
 
