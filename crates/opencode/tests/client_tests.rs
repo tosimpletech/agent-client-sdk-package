@@ -202,6 +202,33 @@ async fn ascii_directory_header_is_not_percent_encoded() {
 }
 
 #[tokio::test]
+async fn workspace_header_is_applied_when_configured() {
+    let response =
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[]";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        experimental_workspace_id: Some("ws_123".to_string()),
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let _ = client
+        .session()
+        .list(RequestOptions::default())
+        .await
+        .expect("list");
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request
+            .to_ascii_lowercase()
+            .contains("x-opencode-workspace: ws_123")
+    );
+}
+
+#[tokio::test]
 async fn parses_sse_events_from_global_event() {
     let response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\nevent: ping\ndata: {\"ok\":true}\n\ndata: second\n\n";
     let (base_url, _request_rx) = spawn_single_response_server(response.to_string()).await;
@@ -319,6 +346,214 @@ async fn lsp_status_requests_expected_path() {
     assert!(
         request.contains("GET /lsp HTTP/1.1")
             || request.contains("GET http://") && request.contains("/lsp "),
+        "unexpected request line: {request}"
+    );
+}
+
+#[tokio::test]
+async fn global_upgrade_posts_expected_path_and_body() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"success\":true,\"version\":\"1.3.0\"}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .global()
+        .upgrade(RequestOptions::default().with_body(json!({ "target": "1.3.0" })))
+        .await
+        .expect("global upgrade");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["version"], "1.3.0");
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("POST /global/upgrade HTTP/1.1")
+            || request.contains("POST http://") && request.contains("/global/upgrade"),
+        "unexpected request line: {request}"
+    );
+    assert!(request.contains("\"target\":\"1.3.0\""));
+}
+
+#[tokio::test]
+async fn project_init_git_posts_expected_path() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"id\":\"proj_1\"}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .project()
+        .init_git(RequestOptions::default().with_query("workspace", json!("ws_123")))
+        .await
+        .expect("project init git");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["id"], "proj_1");
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("POST /project/git/init?workspace=ws_123 HTTP/1.1")
+            || request.contains("POST http://")
+                && request.contains("/project/git/init?workspace=ws_123"),
+        "unexpected request line: {request}"
+    );
+}
+
+#[tokio::test]
+async fn workspace_list_requests_expected_path() {
+    let response =
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[]";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .workspace()
+        .list(RequestOptions::default())
+        .await
+        .expect("workspace list");
+
+    assert_eq!(resp.status, 200);
+    assert!(resp.data.is_array());
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("GET /experimental/workspace HTTP/1.1")
+            || request.contains("GET http://") && request.contains("/experimental/workspace "),
+        "unexpected request line: {request}"
+    );
+}
+
+#[tokio::test]
+async fn experimental_session_list_requests_expected_path() {
+    let response =
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[]";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .experimental()
+        .session()
+        .list(RequestOptions::default())
+        .await
+        .expect("experimental session list");
+
+    assert_eq!(resp.status, 200);
+    assert!(resp.data.is_array());
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("GET /experimental/session HTTP/1.1")
+            || request.contains("GET http://") && request.contains("/experimental/session "),
+        "unexpected request line: {request}"
+    );
+}
+
+#[tokio::test]
+async fn question_reply_posts_expected_path_and_body() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .question()
+        .reply(
+            RequestOptions::default()
+                .with_path("requestID", "req_1")
+                .with_body(json!({ "value": "yes" })),
+        )
+        .await
+        .expect("question reply");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["ok"], true);
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("POST /question/req_1/reply HTTP/1.1")
+            || request.contains("POST http://") && request.contains("/question/req_1/reply"),
+        "unexpected request line: {request}"
+    );
+    assert!(request.contains("\"value\":\"yes\""));
+}
+
+#[tokio::test]
+async fn permission_list_requests_expected_path() {
+    let response =
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[]";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .permission()
+        .list(RequestOptions::default())
+        .await
+        .expect("permission list");
+
+    assert_eq!(resp.status, 200);
+    assert!(resp.data.is_array());
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("GET /permission HTTP/1.1")
+            || request.contains("GET http://") && request.contains("/permission "),
+        "unexpected request line: {request}"
+    );
+}
+
+#[tokio::test]
+async fn file_status_requests_expected_path() {
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"dirty\":false}";
+    let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
+
+    let client = create_opencode_client(Some(OpencodeClientConfig {
+        base_url,
+        ..Default::default()
+    }))
+    .expect("client");
+
+    let resp = client
+        .file()
+        .status(RequestOptions::default().with_query("path", json!("/tmp/file.rs")))
+        .await
+        .expect("file status");
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.data["dirty"], false);
+
+    let request = request_rx.await.expect("request capture");
+    assert!(
+        request.contains("GET /file/status?path=%2Ftmp%2Ffile.rs HTTP/1.1")
+            || request.contains("GET http://")
+                && request.contains("/file/status?path=%2Ftmp%2Ffile.rs"),
         "unexpected request line: {request}"
     );
 }

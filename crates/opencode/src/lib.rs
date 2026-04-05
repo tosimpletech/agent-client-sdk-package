@@ -12,9 +12,12 @@ pub mod server;
 pub mod types;
 
 pub use client::{
-    ApiResponse, AppApi, AuthApi, CommandApi, ControlApi, EventApi, GlobalApi, InstanceApi, LspApi,
-    OauthApi, OpencodeClient, OpencodeClientConfig, PathApi, ProjectApi, ProviderApi, PtyApi,
-    RequestOptions, SessionApi, TuiApi, TuiControlApi, create_opencode_client,
+    ApiResponse, AppApi, AuthApi, CommandApi, ConfigApi, ControlApi, EventApi, ExperimentalApi,
+    ExperimentalSessionApi, FileApi, FindApi, FormatterApi, GlobalApi, InstanceApi, LspApi, McpApi,
+    McpAuthApi, OauthApi, OpencodeClient, OpencodeClientConfig, PartApi, PathApi, PermissionApi,
+    ProjectApi, ProviderApi, PtyApi, QuestionApi, RequestOptions, ResourceApi, SessionApi,
+    SseEvent, SseStream, ToolApi, TuiApi, TuiControlApi, VcsApi, WorkspaceApi, WorktreeApi,
+    create_opencode_client,
 };
 pub use errors::{Error, Result};
 pub use server::{
