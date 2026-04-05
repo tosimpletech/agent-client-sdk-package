@@ -39,6 +39,7 @@ It supports:
 ## Status
 
 - Package version: `0.107.0` (`codex-client-sdk`)
+- Upstream parity baseline: official Codex SDK `0.118.0`
 - Scope: parity-focused SDK implementation for core Codex workflows
 - Validation: crate tests pass (`cargo test -p codex-client-sdk`)
 - Rust docs: public API is documented and checked with `missing_docs`

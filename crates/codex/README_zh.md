@@ -39,6 +39,7 @@
 ## 状态
 
 - 版本：`0.107.0`（`codex-client-sdk`）
+- 上游对齐基线：官方 Codex SDK `0.118.0`
 - 范围：覆盖 Codex 核心工作流的对齐实现
 - 验证：测试通过（`cargo test -p codex-client-sdk`）
 - 文档：公开 API 已补齐 rustdoc，并可通过 `missing_docs` 检查
