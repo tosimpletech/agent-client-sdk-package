@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use codex::{CodexOptions, Input, UserInput};
 use serde_json::json;
 
-use crate::helpers::MockCodexHarness;
+use crate::helpers::{MockCodexHarness, expect_pair};
 
 #[tokio::test]
 async fn rejects_when_process_exits_non_zero() {
@@ -78,4 +78,37 @@ async fn places_resume_args_before_image_args() {
         .position(|arg| arg == "--image")
         .expect("image arg");
     assert!(resume_index < image_index);
+}
+
+#[tokio::test]
+async fn passes_base_url_via_config_instead_of_env() {
+    let harness = MockCodexHarness::new(vec![vec![
+        json!({ "type": "thread.started", "thread_id": "thread_1" }),
+        json!({ "type": "turn.started" }),
+        json!({
+            "type": "item.completed",
+            "item": { "id": "item_1", "type": "agent_message", "text": "ok" }
+        }),
+        json!({
+            "type": "turn.completed",
+            "usage": { "input_tokens": 1, "cached_input_tokens": 0, "output_tokens": 1 }
+        }),
+    ]]);
+
+    let options = CodexOptions {
+        base_url: Some("https://example.invalid/v1".to_string()),
+        ..Default::default()
+    };
+
+    let codex = harness.codex(options).expect("codex");
+    let thread = codex.start_thread(None);
+    thread.run("hi", None).await.expect("run");
+
+    let logs = harness.logs();
+    let invocation = &logs[0];
+    expect_pair(
+        &invocation.args,
+        ("--config", "openai_base_url=\"https://example.invalid/v1\""),
+    );
+    assert!(!invocation.env.contains_key("OPENAI_BASE_URL"));
 }

@@ -212,6 +212,14 @@ impl CodexExec {
             }
         }
 
+        if let Some(base_url) = &args.base_url {
+            command_args.push("--config".to_string());
+            command_args.push(format!(
+                "openai_base_url={}",
+                to_toml_value(&Value::String(base_url.clone()), "openai_base_url")?
+            ));
+        }
+
         if let Some(model) = &args.model {
             command_args.push("--model".to_string());
             command_args.push(model.clone());
@@ -322,9 +330,6 @@ fn build_env(
     env.entry(INTERNAL_ORIGINATOR_ENV.to_string())
         .or_insert_with(|| RUST_SDK_ORIGINATOR.to_string());
 
-    if let Some(base_url) = &args.base_url {
-        env.insert("OPENAI_BASE_URL".to_string(), base_url.clone());
-    }
     if let Some(api_key) = &args.api_key {
         env.insert("CODEX_API_KEY".to_string(), api_key.clone());
     }
