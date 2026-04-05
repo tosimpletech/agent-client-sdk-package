@@ -25,19 +25,19 @@ Rust SDK for integrating OpenCode by launching the local OpenCode CLI server and
 
 ## Overview
 
-This crate is a parity-focused Rust implementation aligned with official OpenCode SDK behavior (`@opencode-ai/sdk` `v1.2.20`) while using Rust-idiomatic APIs.
+This crate is a parity-focused Rust implementation aligned with official OpenCode SDK behavior (`@opencode-ai/sdk` `v1.3.0`) while using Rust-idiomatic APIs.
 
 It supports:
 
 - Local server lifecycle (`create_opencode_server`, `create_opencode`)
 - TUI process lifecycle (`create_opencode_tui`)
-- Typed client entry with endpoint namespaces (`session`, `global`, `project`, `provider`, `mcp`, `tui`, etc.)
+- Typed client entry with endpoint namespaces (`session`, `global`, `project`, `workspace`, `worktree`, `question`, `provider`, `mcp`, `tui`, etc.)
 - Generic operation-id dispatch (`call_operation`, `call_operation_sse`)
 - Robust SSE parsing (split UTF-8 chunks, trailing non-blank-terminated lines)
 
 ## Status
 
-- Package version: `1.2.20` (`opencode-client-sdk`)
+- Package version: `1.3.0` (`opencode-client-sdk`)
 - Scope: parity-focused implementation of OpenCode CLI server + SDK HTTP workflows
 - Validation: crate check/tests are maintained with fixture-based subprocess and HTTP tests
 - Rust docs: public APIs are documented and exported through `opencode`
@@ -173,8 +173,10 @@ while let Some(event) = stream.next().await {
   - `OpencodeClient::call_operation`
   - `OpencodeClient::call_operation_sse`
 - Endpoint namespaces
-  - `SessionApi`, `GlobalApi`, `AppApi`, `ProjectApi`, `ProviderApi`, `AuthApi`, `OauthApi`
+  - `SessionApi`, `GlobalApi`, `AppApi`, `ProjectApi`, `ProviderApi`, `AuthApi`, `OauthApi`, `QuestionApi`
   - `FindApi`, `FileApi`, `PathApi`, `LspApi`, `ToolApi`, `CommandApi`, `ConfigApi`, `FormatterApi`, `VcsApi`, `InstanceApi`
+  - `WorkspaceApi`, `ResourceApi`, `WorktreeApi`, `ExperimentalApi`, `ExperimentalSessionApi`
+  - `PartApi`, `PermissionApi`
   - `McpApi`, `McpAuthApi`, `PtyApi`, `EventApi`, `TuiApi`, `TuiControlApi` (`ControlApi` alias)
 - Input helper types
   - `SessionCreateInput`
@@ -186,6 +188,8 @@ while let Some(event) = stream.next().await {
 - Path parameter resolution compatible with OpenCode naming variants (`sessionID` / `messageID` / snake_case alternatives)
 - Safer multi-parameter route behavior (avoids accidental single `id` fallback substitution)
 - SSE parser hardened for streaming edge cases
+- Client config parity for `x-opencode-directory` and `x-opencode-workspace`
+- `v1.3.0` namespace parity for `global.upgrade`, `project.init_git`, `file.status`, `question`, and experimental workspace/resource/worktree endpoints
 - Explicit typed error model (`thiserror`) with SDK/HTTP/process/CLI-not-found categories
 - Fixture-based tests for server lifecycle, CLI args/env forwarding, HTTP paths, and SSE parsing
 
@@ -197,7 +201,7 @@ while let Some(event) = stream.next().await {
 | Endpoint namespace access | ✅ | ✅ | Similar surface with Rust naming |
 | Operation-id based invocation | ✅ | ✅ | `call_operation` parity-oriented API |
 | SSE event subscription | ✅ | ✅ | Rust returns `futures::Stream` of `SseEvent` |
-| Directory header support | ✅ | ✅ | `x-opencode-directory` auto-applied |
+| Directory/workspace header support | ✅ | ✅ | `x-opencode-directory` and `x-opencode-workspace` auto-applied |
 | Typed error hierarchy | JS Error objects | ✅ (`Error` enum) | Rust uses explicit typed errors |
 | Core SDK workflow | ✅ | ✅ | Parity on behavior, Rust-native structure |
 

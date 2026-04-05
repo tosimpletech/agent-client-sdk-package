@@ -128,6 +128,8 @@ pub struct OpencodeClientConfig {
     pub base_url: String,
     /// Optional project directory mapped to `x-opencode-directory` header.
     pub directory: Option<String>,
+    /// Optional workspace id mapped to `x-opencode-workspace`.
+    pub experimental_workspace_id: Option<String>,
     /// Optional default headers.
     pub headers: HashMap<String, String>,
     /// Optional bearer token added as `Authorization: Bearer ...`.
@@ -141,6 +143,7 @@ impl fmt::Debug for OpencodeClientConfig {
         f.debug_struct("OpencodeClientConfig")
             .field("base_url", &self.base_url)
             .field("directory", &self.directory)
+            .field("experimental_workspace_id", &self.experimental_workspace_id)
             .field("headers", &"<redacted>")
             .field(
                 "bearer_token",
@@ -156,6 +159,7 @@ impl Default for OpencodeClientConfig {
         Self {
             base_url: "http://127.0.0.1:4096".to_string(),
             directory: None,
+            experimental_workspace_id: None,
             headers: HashMap::new(),
             bearer_token: None,
             timeout: Duration::from_secs(60),
@@ -198,6 +202,7 @@ impl fmt::Debug for OpencodeClient {
 /// - default headers from `config.headers`
 /// - `Authorization: Bearer ...` when `bearer_token` is set
 /// - `x-opencode-directory` when `directory` is set
+/// - `x-opencode-workspace` when `experimental_workspace_id` is set
 /// - a request timeout from `config.timeout`
 pub fn create_opencode_client(config: Option<OpencodeClientConfig>) -> Result<OpencodeClient> {
     let config = config.unwrap_or_default();
@@ -214,6 +219,13 @@ pub fn create_opencode_client(config: Option<OpencodeClientConfig>) -> Result<Op
         default_headers.insert(
             HeaderName::from_static("x-opencode-directory"),
             HeaderValue::from_str(&encoded)?,
+        );
+    }
+
+    if let Some(workspace_id) = &config.experimental_workspace_id {
+        default_headers.insert(
+            HeaderName::from_static("x-opencode-workspace"),
+            HeaderValue::from_str(workspace_id)?,
         );
     }
 
@@ -281,6 +293,34 @@ impl OpencodeClient {
         }
     }
 
+    /// Returns experimental grouped endpoint APIs.
+    pub fn experimental(&self) -> ExperimentalApi {
+        ExperimentalApi {
+            client: self.clone(),
+        }
+    }
+
+    /// Returns workspace endpoint APIs (`/experimental/workspace/...`).
+    pub fn workspace(&self) -> WorkspaceApi {
+        WorkspaceApi {
+            client: self.clone(),
+        }
+    }
+
+    /// Returns resource endpoint APIs (`/experimental/resource`).
+    pub fn resource(&self) -> ResourceApi {
+        ResourceApi {
+            client: self.clone(),
+        }
+    }
+
+    /// Returns worktree endpoint APIs (`/experimental/worktree/...`).
+    pub fn worktree(&self) -> WorktreeApi {
+        WorktreeApi {
+            client: self.clone(),
+        }
+    }
+
     /// Returns path endpoint APIs.
     pub fn path(&self) -> PathApi {
         PathApi {
@@ -340,6 +380,27 @@ impl OpencodeClient {
     /// Returns event endpoint APIs.
     pub fn event(&self) -> EventApi {
         EventApi {
+            client: self.clone(),
+        }
+    }
+
+    /// Returns question endpoint APIs.
+    pub fn question(&self) -> QuestionApi {
+        QuestionApi {
+            client: self.clone(),
+        }
+    }
+
+    /// Returns part endpoint APIs.
+    pub fn part(&self) -> PartApi {
+        PartApi {
+            client: self.clone(),
+        }
+    }
+
+    /// Returns permission endpoint APIs.
+    pub fn permission(&self) -> PermissionApi {
+        PermissionApi {
             client: self.clone(),
         }
     }
@@ -894,6 +955,11 @@ impl GlobalApi {
             .await
     }
 
+    /// Upgrades the local OpenCode installation.
+    pub async fn upgrade(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("global.upgrade", options).await
+    }
+
     pub async fn config_get(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::GET, "/global/config", options)
@@ -1000,10 +1066,131 @@ impl ProjectApi {
             .await
     }
 
+    /// Initializes a git repository for the active project.
+    pub async fn init_git(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("project.initGit", options).await
+    }
+
     pub async fn update(&self, options: RequestOptions) -> Result<ApiResponse> {
         self.client
             .request_json(Method::PATCH, "/project/{projectID}", options)
             .await
+    }
+}
+
+/// Experimental workspace endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct WorkspaceApi {
+    client: OpencodeClient,
+}
+
+impl WorkspaceApi {
+    /// Lists workspaces.
+    pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("experimental.workspace.list", options)
+            .await
+    }
+
+    /// Creates a workspace.
+    pub async fn create(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("experimental.workspace.create", options)
+            .await
+    }
+
+    /// Removes a workspace.
+    pub async fn remove(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("experimental.workspace.remove", options)
+            .await
+    }
+}
+
+/// Experimental session endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct ExperimentalSessionApi {
+    client: OpencodeClient,
+}
+
+impl ExperimentalSessionApi {
+    /// Lists experimental sessions.
+    pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("experimental.session.list", options)
+            .await
+    }
+}
+
+/// Experimental resource endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct ResourceApi {
+    client: OpencodeClient,
+}
+
+impl ResourceApi {
+    /// Lists resources for the current environment.
+    pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("experimental.resource.list", options)
+            .await
+    }
+}
+
+/// Experimental grouped endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct ExperimentalApi {
+    client: OpencodeClient,
+}
+
+impl ExperimentalApi {
+    /// Returns experimental workspace APIs.
+    pub fn workspace(&self) -> WorkspaceApi {
+        WorkspaceApi {
+            client: self.client.clone(),
+        }
+    }
+
+    /// Returns experimental session APIs.
+    pub fn session(&self) -> ExperimentalSessionApi {
+        ExperimentalSessionApi {
+            client: self.client.clone(),
+        }
+    }
+
+    /// Returns experimental resource APIs.
+    pub fn resource(&self) -> ResourceApi {
+        ResourceApi {
+            client: self.client.clone(),
+        }
+    }
+}
+
+/// Experimental worktree endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct WorktreeApi {
+    client: OpencodeClient,
+}
+
+impl WorktreeApi {
+    /// Lists worktrees.
+    pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("worktree.list", options).await
+    }
+
+    /// Creates a worktree.
+    pub async fn create(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("worktree.create", options).await
+    }
+
+    /// Removes a worktree.
+    pub async fn remove(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("worktree.remove", options).await
+    }
+
+    /// Resets a worktree.
+    pub async fn reset(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("worktree.reset", options).await
     }
 }
 
@@ -1036,6 +1223,11 @@ impl FileApi {
         self.client
             .request_json(Method::GET, "/file/content", options)
             .await
+    }
+
+    /// Returns file status information.
+    pub async fn status(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("file.status", options).await
     }
 }
 
@@ -1253,6 +1445,74 @@ impl EventApi {
     pub async fn subscribe(&self, options: RequestOptions) -> Result<SseStream> {
         self.client
             .request_sse(Method::GET, "/event", options)
+            .await
+    }
+}
+
+/// Question endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct QuestionApi {
+    client: OpencodeClient,
+}
+
+impl QuestionApi {
+    /// Lists outstanding questions.
+    pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("question.list", options).await
+    }
+
+    /// Replies to a question request.
+    pub async fn reply(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("question.reply", options).await
+    }
+
+    /// Rejects a question request.
+    pub async fn reject(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("question.reject", options).await
+    }
+}
+
+/// Message part endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct PartApi {
+    client: OpencodeClient,
+}
+
+impl PartApi {
+    /// Updates a message part.
+    pub async fn update(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("part.update", options).await
+    }
+
+    /// Deletes a message part.
+    pub async fn delete(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("part.delete", options).await
+    }
+}
+
+/// Permission endpoint namespace.
+#[derive(Debug, Clone)]
+pub struct PermissionApi {
+    client: OpencodeClient,
+}
+
+impl PermissionApi {
+    /// Lists permission requests.
+    pub async fn list(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client.call_operation("permission.list", options).await
+    }
+
+    /// Replies to a permission request.
+    pub async fn reply(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("permission.reply", options)
+            .await
+    }
+
+    /// Responds to a session-scoped permission request.
+    pub async fn respond(&self, options: RequestOptions) -> Result<ApiResponse> {
+        self.client
+            .call_operation("permission.respond", options)
             .await
     }
 }
@@ -1544,6 +1804,7 @@ fn operation_spec(operation_id: &str) -> Option<(Method, &'static str, bool)> {
         "global.dispose" => ("POST", "/global/dispose", false),
         "global.event" => ("GET", "/global/event", true),
         "global.health" => ("GET", "/global/health", false),
+        "global.upgrade" => ("POST", "/global/upgrade", false),
         "instance.dispose" => ("POST", "/instance/dispose", false),
         "lsp.status" => ("GET", "/lsp", false),
         "mcp.add" => ("POST", "/mcp", false),
@@ -1573,6 +1834,7 @@ fn operation_spec(operation_id: &str) -> Option<(Method, &'static str, bool)> {
             false,
         ),
         "project.current" => ("GET", "/project/current", false),
+        "project.initGit" => ("POST", "/project/git/init", false),
         "project.list" => ("GET", "/project", false),
         "project.update" => ("PATCH", "/project/{projectID}", false),
         "provider.auth" => ("GET", "/provider/auth", false),
