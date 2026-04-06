@@ -128,8 +128,6 @@ pub struct OpencodeClientConfig {
     pub base_url: String,
     /// Optional project directory mapped to `x-opencode-directory` header.
     pub directory: Option<String>,
-    /// Optional workspace id mapped to `x-opencode-workspace`.
-    pub experimental_workspace_id: Option<String>,
     /// Optional default headers.
     pub headers: HashMap<String, String>,
     /// Optional bearer token added as `Authorization: Bearer ...`.
@@ -143,7 +141,6 @@ impl fmt::Debug for OpencodeClientConfig {
         f.debug_struct("OpencodeClientConfig")
             .field("base_url", &self.base_url)
             .field("directory", &self.directory)
-            .field("experimental_workspace_id", &self.experimental_workspace_id)
             .field("headers", &"<redacted>")
             .field(
                 "bearer_token",
@@ -159,11 +156,19 @@ impl Default for OpencodeClientConfig {
         Self {
             base_url: "http://127.0.0.1:4096".to_string(),
             directory: None,
-            experimental_workspace_id: None,
             headers: HashMap::new(),
             bearer_token: None,
             timeout: Duration::from_secs(60),
         }
+    }
+}
+
+impl OpencodeClientConfig {
+    /// Adds the `x-opencode-workspace` header in a non-breaking, Rust-native way.
+    pub fn with_workspace_id(mut self, workspace_id: impl Into<String>) -> Self {
+        self.headers
+            .insert("x-opencode-workspace".to_string(), workspace_id.into());
+        self
     }
 }
 
@@ -202,7 +207,7 @@ impl fmt::Debug for OpencodeClient {
 /// - default headers from `config.headers`
 /// - `Authorization: Bearer ...` when `bearer_token` is set
 /// - `x-opencode-directory` when `directory` is set
-/// - `x-opencode-workspace` when `experimental_workspace_id` is set
+/// - `x-opencode-workspace` when added through `OpencodeClientConfig::with_workspace_id`
 /// - a request timeout from `config.timeout`
 pub fn create_opencode_client(config: Option<OpencodeClientConfig>) -> Result<OpencodeClient> {
     let config = config.unwrap_or_default();
@@ -219,13 +224,6 @@ pub fn create_opencode_client(config: Option<OpencodeClientConfig>) -> Result<Op
         default_headers.insert(
             HeaderName::from_static("x-opencode-directory"),
             HeaderValue::from_str(&encoded)?,
-        );
-    }
-
-    if let Some(workspace_id) = &config.experimental_workspace_id {
-        default_headers.insert(
-            HeaderName::from_static("x-opencode-workspace"),
-            HeaderValue::from_str(workspace_id)?,
         );
     }
 
