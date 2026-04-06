@@ -207,11 +207,13 @@ async fn workspace_header_is_applied_when_configured() {
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[]";
     let (base_url, request_rx) = spawn_single_response_server(response.to_string()).await;
 
-    let client = create_opencode_client(Some(OpencodeClientConfig {
-        base_url,
-        experimental_workspace_id: Some("ws_123".to_string()),
-        ..Default::default()
-    }))
+    let client = create_opencode_client(Some(
+        OpencodeClientConfig {
+            base_url,
+            ..Default::default()
+        }
+        .with_workspace_id("ws_123"),
+    ))
     .expect("client");
 
     let _ = client
