@@ -37,8 +37,8 @@
 
 ## 状态
 
-- 版本：`0.1.46`（`claude-code-client-sdk`）
-- 范围：覆盖 Python SDK 核心工作流的对齐实现
+- 版本：`0.1.55`（`claude-code-client-sdk`）
+- 范围：面向官方 Python SDK `0.1.55` 之前核心能力的对齐实现
 - 验证：包含对齐测试与 subprocess/e2e 风格测试
 - 文档：公开 API 已通过 `claude_code` 导出并附带文档
 
@@ -168,7 +168,7 @@ client.disconnect().await?;
   - `ClaudeSdkClient::receive_response`
   - `ClaudeSdkClient::interrupt`
   - `ClaudeSdkClient::disconnect`
-  - 控制类方法：`set_permission_mode`、`set_model`、`rewind_files`、`get_mcp_status`、`get_server_info`
+  - 控制类方法：`set_permission_mode`、`set_model`、`rewind_files`、`get_mcp_status`、`get_context_usage`、`get_server_info`
   - 运行时 MCP/任务控制：`reconnect_mcp_server`、`toggle_mcp_server`、`stop_task`
 - 会话历史
   - `list_sessions`
@@ -200,16 +200,16 @@ client.disconnect().await?;
 | Hook 回调 | ✅ | ✅ | 核心回调协议已覆盖 |
 | 工具权限回调（`can_use_tool`） | ✅ | ✅ | 含上下文与结果类型转换 |
 | SDK MCP 集成 | ✅ | ✅ | 进程内 server 路由完整支持 |
-| 全部消息类型 | ✅ | ✅ | User/Assistant/System/Result/StreamEvent |
+| 当前已类型化的消息覆盖 | ✅ | ✅ | User/Assistant/System/Result/StreamEvent/RateLimit |
 | 全部内容块类型 | ✅ | ✅ | Text/Thinking/ToolUse/ToolResult |
 | 权限类型体系 | ✅ | ✅ | 完整 `PermissionUpdate` / `PermissionResult` |
 | 沙箱配置 | ✅ | ✅ | 完整 `SandboxSettings` / `NetworkConfig` |
 | Agent 定义 | ✅ | ✅ | `AgentDefinition`（含 tools/model） |
 | Hook 输入类型 | ✅（TypedDict） | ✅（`Value`） | Rust 采用原始 JSON 以保持灵活性 |
 | 运行时模型 | Python async runtimes | Tokio | 语言生态差异 |
-| 核心 SDK 工作流 | ✅ | ✅ | 核心用例已实现完整对齐 |
+| 核心 SDK 工作流 | ✅ | ✅ | 当前核心用例已做能力对齐 |
 
-> **说明**：该 Rust SDK 与官方 Python SDK 已实现核心能力完整对齐。Hook 输入类型使用 `Value`（原始 JSON）而非强类型判别联合体，是有意的设计选择：保持灵活性的同时，用户仍可按需通过 `serde_json::from_value()` 反序列化为自定义强类型。
+> **说明**：该 Rust SDK 以官方 Python SDK `0.1.55` 为当前能力对齐目标持续维护。对于尚未覆盖的更高版本增量能力，文档不会提前宣称支持。Hook 输入类型使用 `Value`（原始 JSON）而非强类型判别联合体，是有意的设计选择：保持灵活性的同时，用户仍可按需通过 `serde_json::from_value()` 反序列化为自定义强类型。
 
 ## 兼容性矩阵
 

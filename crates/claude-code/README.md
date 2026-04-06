@@ -37,8 +37,8 @@ It supports:
 
 ## Status
 
-- Package version: `0.1.46` (`claude-code-client-sdk`)
-- Scope: parity-focused implementation of the core Python SDK workflow
+- Package version: `0.1.55` (`claude-code-client-sdk`)
+- Scope: parity-focused implementation of the current core Python SDK workflow through the upstream `0.1.55` SDK surface
 - Validation: parity-focused test suite and subprocess/e2e-style coverage in this crate
 - Rust docs: public API is documented and exported through `claude_code`
 
@@ -168,7 +168,7 @@ client.disconnect().await?;
   - `ClaudeSdkClient::receive_response`
   - `ClaudeSdkClient::interrupt`
   - `ClaudeSdkClient::disconnect`
-  - control methods such as `set_permission_mode`, `set_model`, `rewind_files`, `get_mcp_status`, `get_server_info`
+  - control methods such as `set_permission_mode`, `set_model`, `rewind_files`, `get_mcp_status`, `get_context_usage`, `get_server_info`
   - runtime MCP/task controls: `reconnect_mcp_server`, `toggle_mcp_server`, `stop_task`
 - Session history
   - `list_sessions`
@@ -200,16 +200,16 @@ client.disconnect().await?;
 | Hook callbacks | ✅ | ✅ | Core hook callback protocol covered |
 | Tool permission callback (`can_use_tool`) | ✅ | ✅ | Includes typed context/result conversion |
 | SDK MCP integration | ✅ | ✅ | Full in-process server routing supported |
-| All message types | ✅ | ✅ | User/Assistant/System/Result/StreamEvent |
+| Current typed message coverage | ✅ | ✅ | User/Assistant/System/Result/StreamEvent/RateLimit |
 | All content block types | ✅ | ✅ | Text/Thinking/ToolUse/ToolResult |
 | Permission types | ✅ | ✅ | Full PermissionUpdate/PermissionResult types |
 | Sandbox configuration | ✅ | ✅ | Full SandboxSettings/NetworkConfig types |
 | Agent definitions | ✅ | ✅ | AgentDefinition with tools/model options |
 | Hook input types | ✅ (TypedDict) | ✅ (`Value`) | Rust uses raw JSON for flexibility |
 | Runtime model | Python async runtimes | Tokio | Runtime model differs by language |
-| Core SDK workflow | ✅ | ✅ | Full parity for all core use cases |
+| Core SDK workflow | ✅ | ✅ | Parity-focused coverage for current core use cases |
 
-> **Note**: This Rust SDK achieves full core parity with the official Python SDK. The design choice to use `Value` (raw JSON) for hook input types instead of strongly-typed discriminated unions provides flexibility while still allowing users to deserialize into their own types if needed. For strongly-typed hook inputs, users can define their own Rust types and use `serde_json::from_value()`.
+> **Note**: This Rust SDK is maintained as a parity-focused port of the official Python SDK through the upstream `0.1.55` SDK surface. Some newer upstream areas outside the implemented surface may still be pending. Hook inputs intentionally use `Value` (raw JSON) for flexibility; users can deserialize into custom strong types with `serde_json::from_value()`.
 
 ## Compatibility Matrix
 

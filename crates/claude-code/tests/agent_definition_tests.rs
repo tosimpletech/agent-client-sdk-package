@@ -9,7 +9,16 @@ fn test_agent_definition_serialization_full() {
         description: "A specialized code reviewer".to_string(),
         prompt: "Review the code for bugs and best practices".to_string(),
         tools: Some(vec!["Read".to_string(), "Grep".to_string()]),
+        disallowed_tools: None,
         model: Some("sonnet".to_string()),
+        skills: None,
+        memory: None,
+        mcp_servers: None,
+        initial_prompt: None,
+        max_turns: None,
+        background: None,
+        effort: None,
+        permission_mode: None,
     };
 
     let serialized = serde_json::to_value(&agent).expect("serialize");
@@ -29,6 +38,15 @@ fn test_agent_definition_serialization_minimal() {
         prompt: "Help with tasks".to_string(),
         tools: None,
         model: None,
+        disallowed_tools: None,
+        skills: None,
+        memory: None,
+        mcp_servers: None,
+        initial_prompt: None,
+        max_turns: None,
+        background: None,
+        effort: None,
+        permission_mode: None,
     };
 
     let serialized = serde_json::to_value(&agent).expect("serialize");
@@ -68,6 +86,15 @@ fn test_agent_definitions_map_serialization() {
             prompt: "Review carefully".to_string(),
             tools: Some(vec!["Read".to_string()]),
             model: None,
+            disallowed_tools: None,
+            skills: None,
+            memory: None,
+            mcp_servers: None,
+            initial_prompt: None,
+            max_turns: None,
+            background: None,
+            effort: None,
+            permission_mode: None,
         },
     );
     agents.insert(
@@ -77,6 +104,15 @@ fn test_agent_definitions_map_serialization() {
             prompt: "Write comprehensive tests".to_string(),
             tools: None,
             model: Some("opus".to_string()),
+            disallowed_tools: None,
+            skills: None,
+            memory: None,
+            mcp_servers: None,
+            initial_prompt: None,
+            max_turns: None,
+            background: None,
+            effort: None,
+            permission_mode: None,
         },
     );
 

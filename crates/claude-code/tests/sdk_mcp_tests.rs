@@ -265,6 +265,7 @@ async fn test_tool_annotations() {
     )
     .with_annotations(ToolAnnotations {
         open_world_hint: Some(true),
+        max_result_size_chars: Some(75_000),
         ..Default::default()
     });
 
@@ -331,6 +332,10 @@ async fn test_tool_annotations() {
         true
     );
     assert_eq!(by_name["search"]["annotations"]["openWorldHint"], true);
+    assert_eq!(
+        by_name["search"]["_meta"]["anthropic/maxResultSizeChars"],
+        75_000
+    );
     assert!(by_name["no_annotations"].get("annotations").is_none());
 }
 

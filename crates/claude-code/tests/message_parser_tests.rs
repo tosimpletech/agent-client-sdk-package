@@ -81,10 +81,15 @@ fn test_parse_valid_assistant_message_with_thinking_and_error() {
                 {"type": "thinking", "thinking": "I'm thinking", "signature": "sig-123"},
                 {"type": "text", "text": "Result"}
             ],
-            "model": "claude-opus-4-1-20250805"
+            "model": "claude-opus-4-1-20250805",
+            "usage": {"input_tokens": 10},
+            "id": "msg_123",
+            "stop_reason": "end_turn"
         },
         "error": "rate_limit",
-        "parent_tool_use_id": "toolu_1"
+        "parent_tool_use_id": "toolu_1",
+        "session_id": "session-1",
+        "uuid": "assistant-uuid"
     });
     let message = parse_message(&data).expect("parse").expect("message");
     match message {
@@ -92,6 +97,10 @@ fn test_parse_valid_assistant_message_with_thinking_and_error() {
             assert_eq!(msg.content.len(), 2);
             assert_eq!(msg.error.as_deref(), Some("rate_limit"));
             assert_eq!(msg.parent_tool_use_id.as_deref(), Some("toolu_1"));
+            assert_eq!(msg.message_id.as_deref(), Some("msg_123"));
+            assert_eq!(msg.stop_reason.as_deref(), Some("end_turn"));
+            assert_eq!(msg.session_id.as_deref(), Some("session-1"));
+            assert_eq!(msg.uuid.as_deref(), Some("assistant-uuid"));
         }
         _ => panic!("expected assistant message"),
     }
@@ -184,13 +193,20 @@ fn test_parse_valid_result_message() {
         "is_error": false,
         "num_turns": 2,
         "session_id": "session_123",
-        "stop_reason": "end_turn"
+        "stop_reason": "end_turn",
+        "modelUsage": {"output_tokens": 5},
+        "permission_denials": [{"tool":"Bash"}],
+        "errors": ["warning"],
+        "uuid": "result-uuid"
     });
     let message = parse_message(&data).expect("parse").expect("message");
     match message {
         Message::Result(msg) => {
             assert_eq!(msg.subtype, "success");
             assert_eq!(msg.stop_reason.as_deref(), Some("end_turn"));
+            assert_eq!(msg.uuid.as_deref(), Some("result-uuid"));
+            assert_eq!(msg.errors.as_ref().map(Vec::len), Some(1));
+            assert_eq!(msg.permission_denials.as_ref().map(Vec::len), Some(1));
         }
         _ => panic!("expected result message"),
     }
@@ -218,7 +234,7 @@ fn test_parse_unknown_message_type_returns_none() {
 }
 
 #[test]
-fn test_rate_limit_event_returns_none() {
+fn test_rate_limit_event_parses() {
     let data = json!({
         "type": "rate_limit_event",
         "rate_limit_info": {
@@ -232,12 +248,19 @@ fn test_rate_limit_event_returns_none() {
         "session_id": "test-session-id"
     });
 
-    let result = parse_message(&data).expect("parse ok");
-    assert!(result.is_none());
+    let result = parse_message(&data).expect("parse ok").expect("message");
+    match result {
+        Message::RateLimit(event) => {
+            assert_eq!(event.session_id, "test-session-id");
+            assert_eq!(event.uuid, "550e8400-e29b-41d4-a716-446655440000");
+            assert_eq!(event.rate_limit_info.utilization, Some(0.85));
+        }
+        _ => panic!("expected rate limit event"),
+    }
 }
 
 #[test]
-fn test_rate_limit_event_rejected_returns_none() {
+fn test_rate_limit_event_rejected_parses() {
     let data = json!({
         "type": "rate_limit_event",
         "rate_limit_info": {
@@ -252,8 +275,16 @@ fn test_rate_limit_event_rejected_returns_none() {
         "session_id": "test-session-id"
     });
 
-    let result = parse_message(&data).expect("parse ok");
-    assert!(result.is_none());
+    let result = parse_message(&data).expect("parse ok").expect("message");
+    match result {
+        Message::RateLimit(event) => {
+            assert_eq!(
+                event.rate_limit_info.overage_disabled_reason.as_deref(),
+                Some("out_of_credits")
+            );
+        }
+        _ => panic!("expected rate limit event"),
+    }
 }
 
 #[test]

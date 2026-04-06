@@ -7,8 +7,8 @@ use std::time::Duration;
 use claude_code::{
     AgentDefinition, ClaudeAgentOptions, Error, McpServerConfig, McpServersOption,
     McpStdioServerConfig, PermissionMode, Prompt, SandboxNetworkConfig, SandboxSettings,
-    SettingSource, SubprocessCliTransport, SystemPrompt, SystemPromptPreset, ThinkingConfig,
-    ToolsOption, ToolsPreset, Transport,
+    SettingSource, SubprocessCliTransport, SystemPrompt, SystemPromptFile, SystemPromptPreset,
+    TaskBudget, ThinkingConfig, ToolsOption, ToolsPreset, Transport,
 };
 use serde_json::Value;
 use tokio::sync::Mutex;
@@ -125,6 +125,20 @@ fn test_build_command_with_system_prompt_preset_and_append() {
 }
 
 #[test]
+fn test_build_command_with_system_prompt_file() {
+    let mut options = make_options();
+    options.system_prompt = Some(SystemPrompt::File(SystemPromptFile {
+        type_: "file".to_string(),
+        path: "/tmp/system-prompt.md".to_string(),
+    }));
+    let transport = SubprocessCliTransport::new(Prompt::Messages, options).expect("transport");
+    let cmd = transport.build_command().expect("command");
+
+    assert!(cmd.contains(&"--system-prompt-file".to_string()));
+    assert!(cmd.contains(&"/tmp/system-prompt.md".to_string()));
+}
+
+#[test]
 fn test_build_command_with_options() {
     let mut options = make_options();
     options.allowed_tools = vec!["Read".to_string(), "Write".to_string()];
@@ -146,6 +160,17 @@ fn test_build_command_with_options() {
     assert!(cmd.contains(&"acceptEdits".to_string()));
     assert!(cmd.contains(&"--max-turns".to_string()));
     assert!(cmd.contains(&"5".to_string()));
+}
+
+#[test]
+fn test_build_command_with_dont_ask_permission_mode() {
+    let mut options = make_options();
+    options.permission_mode = Some(PermissionMode::DontAsk);
+
+    let transport = SubprocessCliTransport::new(Prompt::Messages, options).expect("transport");
+    let cmd = transport.build_command().expect("command");
+
+    assert_eq!(flag_value(&cmd, "--permission-mode"), "dontAsk");
 }
 
 #[test]
@@ -210,6 +235,32 @@ fn test_session_continuation() {
     assert!(cmd.contains(&"--continue".to_string()));
     assert!(cmd.contains(&"--resume".to_string()));
     assert!(cmd.contains(&"session-123".to_string()));
+}
+
+#[test]
+fn test_build_command_with_session_id_and_task_budget() {
+    let mut options = make_options();
+    options.session_id = Some("session-fixed".to_string());
+    options.task_budget = Some(TaskBudget { total: 4096 });
+
+    let transport = SubprocessCliTransport::new(Prompt::Messages, options).expect("transport");
+    let cmd = transport.build_command().expect("command");
+
+    assert_eq!(flag_value(&cmd, "--session-id"), "session-fixed");
+    assert_eq!(flag_value(&cmd, "--add-betas"), "task-budgets-2026-03-13");
+    assert_eq!(
+        serde_json::from_str::<Value>(&flag_value(&cmd, "--output-config")).expect("output-config"),
+        serde_json::json!({"task_budget": {"total": 4096}})
+    );
+}
+
+#[test]
+fn test_build_command_omits_setting_sources_when_unset() {
+    let options = make_options();
+    let transport = SubprocessCliTransport::new(Prompt::Messages, options).expect("transport");
+    let cmd = transport.build_command().expect("command");
+
+    assert!(!cmd.contains(&"--setting-sources".to_string()));
 }
 
 #[tokio::test]
@@ -656,7 +707,16 @@ fn test_build_command_agents_always_via_initialize() {
             description: "A test agent".to_string(),
             prompt: "You are a test agent".to_string(),
             tools: None,
+            disallowed_tools: None,
             model: None,
+            skills: None,
+            memory: None,
+            mcp_servers: None,
+            initial_prompt: None,
+            max_turns: None,
+            background: None,
+            effort: None,
+            permission_mode: None,
         },
     );
 
@@ -699,7 +759,16 @@ fn test_build_command_large_agents_work() {
             description: "A large agent".to_string(),
             prompt: "x".repeat(50_000),
             tools: None,
+            disallowed_tools: None,
             model: None,
+            skills: None,
+            memory: None,
+            mcp_servers: None,
+            initial_prompt: None,
+            max_turns: None,
+            background: None,
+            effort: None,
+            permission_mode: None,
         },
     );
 
