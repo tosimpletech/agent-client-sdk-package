@@ -258,6 +258,12 @@ fn extract_first_string_field(entries: &[Value], key: &str) -> Option<String> {
     })
 }
 
+fn extract_first_i64_field(entries: &[Value], key: &str) -> Option<i64> {
+    entries
+        .iter()
+        .find_map(|entry| entry.as_object()?.get(key)?.as_i64())
+}
+
 fn millis_since_epoch(modified: std::time::SystemTime) -> i64 {
     modified
         .duration_since(UNIX_EPOCH)
@@ -330,11 +336,13 @@ fn read_sessions_from_dir(project_dir: &Path, project_path: Option<&str>) -> Vec
                 .modified()
                 .map(millis_since_epoch)
                 .unwrap_or_default(),
-            file_size: metadata.len(),
+            file_size: Some(metadata.len()),
             custom_title,
             first_prompt,
             git_branch,
             cwd,
+            tag: extract_last_string_field(&entries, "tag"),
+            created_at: extract_first_i64_field(&entries, "createdAt"),
         });
     }
 

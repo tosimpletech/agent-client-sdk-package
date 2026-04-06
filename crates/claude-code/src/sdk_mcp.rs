@@ -249,6 +249,14 @@ impl McpSdkServer {
                         "annotations".to_string(),
                         serde_json::to_value(annotations).unwrap_or(Value::Null),
                     );
+                    if let Some(max_result_size_chars) = annotations.max_result_size_chars {
+                        obj.insert(
+                            "_meta".to_string(),
+                            json!({
+                                "anthropic/maxResultSizeChars": max_result_size_chars
+                            }),
+                        );
+                    }
                 }
                 base
             })

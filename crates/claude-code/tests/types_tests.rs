@@ -1,6 +1,7 @@
 use claude_code::{
-    AssistantMessage, ClaudeAgentOptions, PermissionMode, ResultMessage, TextBlock, ThinkingBlock,
-    ToolPermissionContext, ToolResultBlock, ToolUseBlock, UserContent, UserMessage,
+    AssistantMessage, ClaudeAgentOptions, PermissionMode, RateLimitStatus, ResultMessage,
+    TextBlock, ThinkingBlock, ToolPermissionContext, ToolResultBlock, ToolUseBlock, UserContent,
+    UserMessage,
 };
 use serde_json::json;
 
@@ -25,6 +26,11 @@ fn test_assistant_message_with_text() {
         model: "claude-opus-4-1-20250805".to_string(),
         parent_tool_use_id: None,
         error: None,
+        usage: None,
+        message_id: None,
+        stop_reason: None,
+        session_id: None,
+        uuid: None,
     };
     assert_eq!(msg.content.len(), 1);
 }
@@ -40,6 +46,11 @@ fn test_assistant_message_with_thinking() {
         model: "claude-opus-4-1-20250805".to_string(),
         parent_tool_use_id: None,
         error: None,
+        usage: None,
+        message_id: None,
+        stop_reason: None,
+        session_id: None,
+        uuid: None,
     };
     assert_eq!(msg.content.len(), 1);
     match &msg.content[0] {
@@ -86,6 +97,10 @@ fn test_result_message() {
         usage: None,
         result: None,
         structured_output: None,
+        model_usage: None,
+        permission_denials: None,
+        errors: None,
+        uuid: None,
     };
     assert_eq!(msg.subtype, "success");
     assert_eq!(msg.total_cost_usd, Some(0.01));
@@ -122,6 +137,9 @@ fn test_options_permission_modes() {
 
     options.permission_mode = Some(PermissionMode::AcceptEdits);
     assert_eq!(options.permission_mode, Some(PermissionMode::AcceptEdits));
+
+    options.permission_mode = Some(PermissionMode::DontAsk);
+    assert_eq!(options.permission_mode, Some(PermissionMode::DontAsk));
 }
 
 #[test]
@@ -129,14 +147,20 @@ fn test_tool_permission_context_with_blocked_path() {
     let context = ToolPermissionContext {
         suggestions: vec![],
         blocked_path: Some("/tmp/blocked.txt".to_string()),
+        tool_use_id: Some("toolu-1".to_string()),
+        agent_id: Some("agent-1".to_string()),
         signal: None,
     };
 
     assert_eq!(context.blocked_path.as_deref(), Some("/tmp/blocked.txt"));
+    assert_eq!(context.tool_use_id.as_deref(), Some("toolu-1"));
+    assert_eq!(context.agent_id.as_deref(), Some("agent-1"));
     assert!(context.signal.is_none());
 
     let serialized = serde_json::to_value(&context).expect("serialize context");
     assert_eq!(serialized["blocked_path"], "/tmp/blocked.txt");
+    assert_eq!(serialized["tool_use_id"], "toolu-1");
+    assert_eq!(serialized["agent_id"], "agent-1");
     assert!(serialized.get("signal").is_none());
 }
 
@@ -146,10 +170,19 @@ fn test_tool_permission_context_default() {
 
     assert!(context.suggestions.is_empty());
     assert!(context.blocked_path.is_none());
+    assert!(context.tool_use_id.is_none());
+    assert!(context.agent_id.is_none());
     assert!(context.signal.is_none());
 
     let serialized = serde_json::to_value(&context).expect("serialize context");
     assert_eq!(serialized, json!({"suggestions": []}));
+}
+
+#[test]
+fn test_rate_limit_status_deserializes() {
+    let status: RateLimitStatus =
+        serde_json::from_value(json!("allowed_warning")).expect("deserialize status");
+    assert_eq!(status, RateLimitStatus::AllowedWarning);
 }
 
 #[test]

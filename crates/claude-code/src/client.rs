@@ -21,7 +21,8 @@ use crate::sdk_mcp::McpSdkServer;
 use crate::transport::subprocess_cli::{Prompt as TransportPrompt, SubprocessCliTransport};
 use crate::transport::{Transport, TransportFactory};
 use crate::types::{
-    ClaudeAgentOptions, McpServerConfig, McpServersOption, McpStatusResponse, Message,
+    ClaudeAgentOptions, ContextUsageResponse, McpServerConfig, McpServersOption, McpStatusResponse,
+    Message, PermissionMode,
 };
 
 /// Input prompt for a query — either plain text or structured messages.
@@ -593,18 +594,28 @@ impl ClaudeSdkClient {
     /// # async fn example() -> claude_code::Result<()> {
     /// let mut client = ClaudeSdkClient::new(None, None);
     /// client.connect(None).await?;
-    /// client.set_permission_mode("plan").await?;
+    /// client.set_permission_mode(claude_code::PermissionMode::Plan).await?;
     /// client.disconnect().await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn set_permission_mode(&self, mode: &str) -> Result<()> {
+    pub async fn set_permission_mode(&self, mode: PermissionMode) -> Result<()> {
         let query = self.query.as_ref().ok_or_else(|| {
             Error::CLIConnection(CLIConnectionError::new(
                 "Not connected. Call connect() first.",
             ))
         })?;
         query.set_permission_mode(mode).await
+    }
+
+    /// Returns the current context-usage breakdown for the connected session.
+    pub async fn get_context_usage(&self) -> Result<ContextUsageResponse> {
+        let query = self.query.as_ref().ok_or_else(|| {
+            Error::CLIConnection(CLIConnectionError::new(
+                "Not connected. Call connect() first.",
+            ))
+        })?;
+        query.get_context_usage().await
     }
 
     /// Changes the model used for the current session.

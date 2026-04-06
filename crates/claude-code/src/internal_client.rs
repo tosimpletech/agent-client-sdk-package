@@ -38,6 +38,14 @@ impl Default for InternalClient {
 }
 
 impl InternalClient {
+    fn initialize_timeout() -> Duration {
+        let timeout_ms = std::env::var("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(60_000);
+        Duration::from_secs_f64((timeout_ms as f64 / 1000.0).max(60.0))
+    }
+
     /// Creates a new `InternalClient`.
     ///
     /// # Example
@@ -120,7 +128,7 @@ impl InternalClient {
             hook_callbacks,
             sdk_mcp_servers,
             options.agents.clone(),
-            Duration::from_secs(60),
+            Self::initialize_timeout(),
         );
         query.initialize(hooks_config).await?;
         Ok(query)

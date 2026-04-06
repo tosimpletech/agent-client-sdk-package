@@ -124,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "claude-code-client-sdk"
-version = "0.1.46"
+version = "0.1.55"
 dependencies = [
  "async-trait",
  "futures",

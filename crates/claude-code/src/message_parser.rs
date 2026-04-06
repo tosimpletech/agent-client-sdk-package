@@ -10,8 +10,9 @@ use serde_json::Value;
 
 use crate::errors::MessageParseError;
 use crate::types::{
-    AssistantMessage, ContentBlock, Message, ResultMessage, StreamEvent, SystemMessage, TextBlock,
-    ThinkingBlock, ToolResultBlock, ToolUseBlock, UserContent, UserMessage,
+    AssistantMessage, ContentBlock, Message, RateLimitEvent, RateLimitInfo, ResultMessage,
+    StreamEvent, SystemMessage, TextBlock, ThinkingBlock, ToolResultBlock, ToolUseBlock,
+    UserContent, UserMessage,
 };
 
 /// Returns a human-readable type name for a JSON value (for error messages).
@@ -228,6 +229,23 @@ pub fn parse_message(data: &Value) -> std::result::Result<Option<Message>, Messa
                     .get("error")
                     .and_then(Value::as_str)
                     .map(ToString::to_string),
+                usage: message_obj.get("usage").cloned(),
+                message_id: message_obj
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                stop_reason: message_obj
+                    .get("stop_reason")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                session_id: obj
+                    .get("session_id")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                uuid: obj
+                    .get("uuid")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
             })))
         }
         "system" => {
@@ -313,6 +331,21 @@ pub fn parse_message(data: &Value) -> std::result::Result<Option<Message>, Messa
                     .and_then(Value::as_str)
                     .map(ToString::to_string),
                 structured_output: obj.get("structured_output").cloned(),
+                model_usage: obj.get("modelUsage").cloned(),
+                permission_denials: obj
+                    .get("permission_denials")
+                    .and_then(Value::as_array)
+                    .cloned(),
+                errors: obj.get("errors").and_then(Value::as_array).map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(ToString::to_string))
+                        .collect()
+                }),
+                uuid: obj
+                    .get("uuid")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
             })))
         }
         "stream_event" => {
@@ -342,6 +375,80 @@ pub fn parse_message(data: &Value) -> std::result::Result<Option<Message>, Messa
                     .get("parent_tool_use_id")
                     .and_then(Value::as_str)
                     .map(ToString::to_string),
+            })))
+        }
+        "rate_limit_event" => {
+            let info = get_required(obj, "rate_limit_info", "rate_limit_event", data)?
+                .as_object()
+                .ok_or_else(|| {
+                    MessageParseError::new(
+                        "Missing required field in rate_limit_event message: 'rate_limit_info'",
+                        Some(data.clone()),
+                    )
+                })?;
+            let uuid = get_required(obj, "uuid", "rate_limit_event", data)?
+                .as_str()
+                .ok_or_else(|| {
+                    MessageParseError::new(
+                        "Missing required field in rate_limit_event message: 'uuid'",
+                        Some(data.clone()),
+                    )
+                })?;
+            let session_id = get_required(obj, "session_id", "rate_limit_event", data)?
+                .as_str()
+                .ok_or_else(|| {
+                    MessageParseError::new(
+                        "Missing required field in rate_limit_event message: 'session_id'",
+                        Some(data.clone()),
+                    )
+                })?;
+
+            Ok(Some(Message::RateLimit(RateLimitEvent {
+                rate_limit_info: RateLimitInfo {
+                    status: serde_json::from_value(
+                        info.get("status")
+                            .cloned()
+                            .unwrap_or(Value::String("allowed".to_string())),
+                    )
+                    .map_err(|err| {
+                        MessageParseError::new(
+                            format!("Invalid rate_limit_event status: {err}"),
+                            Some(data.clone()),
+                        )
+                    })?,
+                    resets_at: info.get("resetsAt").and_then(Value::as_i64),
+                    rate_limit_type: info
+                        .get("rateLimitType")
+                        .cloned()
+                        .map(serde_json::from_value)
+                        .transpose()
+                        .map_err(|err| {
+                            MessageParseError::new(
+                                format!("Invalid rate_limit_event rateLimitType: {err}"),
+                                Some(data.clone()),
+                            )
+                        })?,
+                    utilization: info.get("utilization").and_then(Value::as_f64),
+                    overage_status: info
+                        .get("overageStatus")
+                        .cloned()
+                        .map(serde_json::from_value)
+                        .transpose()
+                        .map_err(|err| {
+                            MessageParseError::new(
+                                format!("Invalid rate_limit_event overageStatus: {err}"),
+                                Some(data.clone()),
+                            )
+                        })?,
+                    overage_resets_at: info.get("overageResetsAt").and_then(Value::as_i64),
+                    overage_disabled_reason: info
+                        .get("overageDisabledReason")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                    raw: Value::Object(info.clone()),
+                },
+                uuid: uuid.to_string(),
+                session_id: session_id.to_string(),
             })))
         }
         _ => Ok(None),
