@@ -74,13 +74,16 @@ use opencode::{create_opencode_client, OpencodeClientConfig};
 let mut headers = HashMap::new();
 headers.insert("x-custom-header".to_string(), "value".to_string());
 
-let _client = create_opencode_client(Some(OpencodeClientConfig {
-    base_url: "http://127.0.0.1:4096".to_string(),
-    headers,
-    bearer_token: None,
-    directory: Some("/tmp/project".to_string()),
-    ..Default::default()
-}))?;
+let _client = create_opencode_client(Some(
+    OpencodeClientConfig {
+        base_url: "http://127.0.0.1:4096".to_string(),
+        headers,
+        bearer_token: None,
+        directory: Some("/tmp/project".to_string()),
+        ..Default::default()
+    }
+    .with_workspace_id("ws_123"),
+))?;
 # Ok(())
 # }
 ```
