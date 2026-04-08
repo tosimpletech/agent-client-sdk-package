@@ -29,8 +29,8 @@ use crate::message_parser::parse_message;
 use crate::sdk_mcp::McpSdkServer;
 use crate::transport::{TransportCloseHandle, TransportReader, TransportWriter};
 use crate::types::{
-    AgentDefinition, CanUseToolCallback, HookCallback, HookMatcher, McpStatusResponse, Message,
-    PermissionResult, ToolPermissionContext,
+    AgentDefinition, CanUseToolCallback, ContextUsageResponse, HookCallback, HookMatcher,
+    McpStatusResponse, Message, PermissionMode, PermissionResult, ToolPermissionContext,
 };
 
 /// Channel buffer size for SDK messages (matches Python SDK's buffer=100).
@@ -715,17 +715,32 @@ impl Query {
     /// use claude_code::Query;
     ///
     /// # async fn demo(query: &Query) -> claude_code::Result<()> {
-    /// query.set_permission_mode("plan").await?;
+    /// query.set_permission_mode(claude_code::PermissionMode::Plan).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn set_permission_mode(&self, mode: &str) -> Result<()> {
+    pub async fn set_permission_mode(&self, mode: PermissionMode) -> Result<()> {
         self.send_control_request(
             json!({ "subtype": "set_permission_mode", "mode": mode }),
             Duration::from_secs(60),
         )
         .await?;
         Ok(())
+    }
+
+    /// Returns the current context-usage breakdown for the session.
+    pub async fn get_context_usage(&self) -> Result<ContextUsageResponse> {
+        let raw = self
+            .send_control_request(
+                json!({ "subtype": "get_context_usage" }),
+                Duration::from_secs(60),
+            )
+            .await?;
+        serde_json::from_value(raw).map_err(|err| {
+            Error::Other(format!(
+                "Failed to decode typed context usage response: {err}"
+            ))
+        })
     }
 
     /// Changes the model used by the CLI via a control request.
@@ -1067,6 +1082,14 @@ async fn handle_can_use_tool_request(
     let context = ToolPermissionContext {
         suggestions,
         blocked_path,
+        tool_use_id: request_data
+            .get("tool_use_id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        agent_id: request_data
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
         signal: None,
     };
 

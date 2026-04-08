@@ -48,6 +48,7 @@ fn test_permission_mode_serialization_roundtrip() {
         (PermissionMode::AcceptEdits, "acceptEdits"),
         (PermissionMode::Plan, "plan"),
         (PermissionMode::BypassPermissions, "bypassPermissions"),
+        (PermissionMode::DontAsk, "dontAsk"),
     ];
 
     for (mode, expected_str) in modes {

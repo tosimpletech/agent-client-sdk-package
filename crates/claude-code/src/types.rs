@@ -25,6 +25,7 @@ use crate::sdk_mcp::McpSdkServer;
 /// - `AcceptEdits` — Auto-accept file edits without prompting.
 /// - `Plan` — Planning mode; Claude describes actions without executing them.
 /// - `BypassPermissions` — Bypass all permission checks. **Use with caution.**
+/// - `DontAsk` — Allow all tool use without prompting.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PermissionMode {
     /// Standard permission behavior with interactive approval when needed.
@@ -39,6 +40,9 @@ pub enum PermissionMode {
     /// Bypass all permission checks.
     #[serde(rename = "bypassPermissions")]
     BypassPermissions,
+    /// Allow all tool use without prompting.
+    #[serde(rename = "dontAsk")]
+    DontAsk,
 }
 
 /// Controls which filesystem-based configuration sources the SDK loads settings from.
@@ -142,6 +146,8 @@ pub enum SystemPrompt {
     Text(String),
     /// Use Claude Code's preset system prompt.
     Preset(SystemPromptPreset),
+    /// Load the system prompt from a file.
+    File(SystemPromptFile),
 }
 
 /// Tools configuration.
@@ -182,9 +188,36 @@ pub struct AgentDefinition {
     /// Optional tool allowlist for this sub-agent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<String>>,
+    /// Optional disallowed tools for this sub-agent.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "disallowedTools")]
+    pub disallowed_tools: Option<Vec<String>>,
     /// Optional model override for this sub-agent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Optional skills to enable for this sub-agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skills: Option<Vec<String>>,
+    /// Optional memory scope.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory: Option<String>,
+    /// Optional MCP servers available to this sub-agent.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "mcpServers")]
+    pub mcp_servers: Option<Vec<Value>>,
+    /// Optional initial prompt override.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "initialPrompt")]
+    pub initial_prompt: Option<String>,
+    /// Optional maximum turns override.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "maxTurns")]
+    pub max_turns: Option<i64>,
+    /// Whether this sub-agent runs in background mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background: Option<bool>,
+    /// Optional effort override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<Value>,
+    /// Optional permission mode override.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "permissionMode")]
+    pub permission_mode: Option<PermissionMode>,
 }
 
 /// A rule to add, replace, or remove in a permission update.
@@ -385,6 +418,12 @@ pub struct ToolPermissionContext {
     /// Optional blocked path associated with the request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked_path: Option<String>,
+    /// Unique tool-use identifier for this request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    /// Sub-agent identifier when the request originates from a sub-agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     /// Reserved signal placeholder for future API compatibility.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signal: Option<()>,
@@ -1084,6 +1123,16 @@ pub struct AssistantMessage {
     pub parent_tool_use_id: Option<String>,
     /// Optional error classification string.
     pub error: Option<String>,
+    /// Optional per-turn usage payload.
+    pub usage: Option<Value>,
+    /// Optional Claude message identifier.
+    pub message_id: Option<String>,
+    /// Optional stop reason for this assistant message.
+    pub stop_reason: Option<String>,
+    /// Optional session identifier echoed by the CLI.
+    pub session_id: Option<String>,
+    /// Optional message UUID.
+    pub uuid: Option<String>,
 }
 
 /// A system message with metadata.
@@ -1316,6 +1365,61 @@ pub struct ResultMessage {
     pub result: Option<String>,
     /// Optional structured output payload.
     pub structured_output: Option<Value>,
+    /// Optional model usage payload.
+    pub model_usage: Option<Value>,
+    /// Optional permission denials emitted during the turn.
+    pub permission_denials: Option<Vec<Value>>,
+    /// Optional CLI error list.
+    pub errors: Option<Vec<String>>,
+    /// Optional message UUID.
+    pub uuid: Option<String>,
+}
+
+/// Rate-limit status values emitted by the CLI.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RateLimitStatus {
+    #[serde(rename = "allowed")]
+    Allowed,
+    #[serde(rename = "allowed_warning")]
+    AllowedWarning,
+    #[serde(rename = "rejected")]
+    Rejected,
+}
+
+/// Rate-limit window identifiers emitted by the CLI.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RateLimitType {
+    #[serde(rename = "five_hour")]
+    FiveHour,
+    #[serde(rename = "seven_day")]
+    SevenDay,
+    #[serde(rename = "seven_day_opus")]
+    SevenDayOpus,
+    #[serde(rename = "seven_day_sonnet")]
+    SevenDaySonnet,
+    #[serde(rename = "overage")]
+    Overage,
+}
+
+/// Parsed rate-limit details emitted by the CLI.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RateLimitInfo {
+    pub status: RateLimitStatus,
+    pub resets_at: Option<i64>,
+    pub rate_limit_type: Option<RateLimitType>,
+    pub utilization: Option<f64>,
+    pub overage_status: Option<RateLimitStatus>,
+    pub overage_resets_at: Option<i64>,
+    pub overage_disabled_reason: Option<String>,
+    pub raw: Value,
+}
+
+/// Rate-limit event emitted by the CLI when rate-limit state changes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RateLimitEvent {
+    pub rate_limit_info: RateLimitInfo,
+    pub uuid: String,
+    pub session_id: String,
 }
 
 /// Stream event for partial message updates during streaming.
@@ -1350,7 +1454,7 @@ pub struct SDKSessionInfo {
     /// Last modified time in milliseconds since epoch.
     pub last_modified: i64,
     /// Session file size in bytes.
-    pub file_size: u64,
+    pub file_size: Option<u64>,
     /// User-defined custom title if present.
     pub custom_title: Option<String>,
     /// First meaningful prompt from the session.
@@ -1359,6 +1463,74 @@ pub struct SDKSessionInfo {
     pub git_branch: Option<String>,
     /// Working directory associated with the session.
     pub cwd: Option<String>,
+    /// Optional session tag.
+    pub tag: Option<String>,
+    /// Session creation time in milliseconds since epoch.
+    pub created_at: Option<i64>,
+}
+
+/// Context usage category returned by `get_context_usage`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContextUsageCategory {
+    pub name: String,
+    pub tokens: i64,
+    pub color: String,
+    #[serde(rename = "isDeferred", skip_serializing_if = "Option::is_none")]
+    pub is_deferred: Option<bool>,
+}
+
+/// Typed context-usage response.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContextUsageResponse {
+    pub categories: Vec<ContextUsageCategory>,
+    #[serde(rename = "totalTokens")]
+    pub total_tokens: i64,
+    #[serde(rename = "maxTokens")]
+    pub max_tokens: i64,
+    #[serde(rename = "rawMaxTokens")]
+    pub raw_max_tokens: i64,
+    pub percentage: f64,
+    pub model: String,
+    #[serde(rename = "isAutoCompactEnabled")]
+    pub is_auto_compact_enabled: bool,
+    #[serde(rename = "memoryFiles")]
+    pub memory_files: Vec<Value>,
+    #[serde(rename = "mcpTools")]
+    pub mcp_tools: Vec<Value>,
+    pub agents: Vec<Value>,
+    #[serde(rename = "gridRows")]
+    pub grid_rows: Vec<Vec<Value>>,
+    #[serde(
+        rename = "autoCompactThreshold",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub auto_compact_threshold: Option<i64>,
+    #[serde(
+        rename = "deferredBuiltinTools",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deferred_builtin_tools: Option<Vec<Value>>,
+    #[serde(rename = "systemTools", skip_serializing_if = "Option::is_none")]
+    pub system_tools: Option<Vec<Value>>,
+    #[serde(
+        rename = "systemPromptSections",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub system_prompt_sections: Option<Vec<Value>>,
+    #[serde(rename = "slashCommands", skip_serializing_if = "Option::is_none")]
+    pub slash_commands: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skills: Option<Value>,
+    #[serde(rename = "messageBreakdown", skip_serializing_if = "Option::is_none")]
+    pub message_breakdown: Option<Value>,
+    #[serde(rename = "apiUsage", skip_serializing_if = "Option::is_none")]
+    pub api_usage: Option<Value>,
+}
+
+/// API-side task budget in tokens.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskBudget {
+    pub total: i64,
 }
 
 /// User/assistant message returned by [`get_session_messages`](crate::get_session_messages).
@@ -1393,6 +1565,8 @@ pub enum Message {
     Result(ResultMessage),
     /// A partial streaming event (only when `include_partial_messages` is enabled).
     StreamEvent(StreamEvent),
+    /// Rate-limit event emitted by the CLI.
+    RateLimit(RateLimitEvent),
 }
 
 /// Controls extended thinking behavior.
@@ -1447,6 +1621,9 @@ pub struct ToolAnnotations {
     /// Hint that the tool interacts with external/open systems.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub open_world_hint: Option<bool>,
+    /// Threshold for large tool-result spill handling in the CLI.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_result_size_chars: Option<i64>,
 }
 
 /// Main configuration for Claude Code queries and sessions.
@@ -1515,6 +1692,8 @@ pub struct ClaudeAgentOptions {
     pub continue_conversation: bool,
     /// Session ID to resume.
     pub resume: Option<String>,
+    /// Explicit session ID for new sessions.
+    pub session_id: Option<String>,
     /// Maximum conversation turns.
     pub max_turns: Option<i64>,
     /// Maximum budget in USD for the session.
@@ -1580,6 +1759,8 @@ pub struct ClaudeAgentOptions {
     /// Enable file change tracking for rewinding via
     /// [`ClaudeSdkClient::rewind_files()`](crate::ClaudeSdkClient::rewind_files).
     pub enable_file_checkpointing: bool,
+    /// Optional API-side task budget in tokens.
+    pub task_budget: Option<TaskBudget>,
     /// Optional callback for stderr output lines from the CLI process.
     ///
     /// When set, stderr is piped and each non-empty line is passed to this callback.
@@ -1601,6 +1782,7 @@ impl Default for ClaudeAgentOptions {
             permission_mode: None,
             continue_conversation: false,
             resume: None,
+            session_id: None,
             max_turns: None,
             max_budget_usd: None,
             disallowed_tools: Vec::new(),
@@ -1630,7 +1812,17 @@ impl Default for ClaudeAgentOptions {
             effort: None,
             output_format: None,
             enable_file_checkpointing: false,
+            task_budget: None,
             stderr: None,
         }
     }
+}
+/// System prompt file configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SystemPromptFile {
+    /// Discriminator for file-based prompts.
+    #[serde(rename = "type")]
+    pub type_: String,
+    /// Filesystem path to the system prompt file.
+    pub path: String,
 }

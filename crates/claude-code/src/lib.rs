@@ -100,18 +100,19 @@ pub use transport::{
     TransportSplitResult, TransportWriter, split_with_adapter,
 };
 pub use types::{
-    AgentDefinition, AssistantMessage, ClaudeAgentOptions, ContentBlock, HookCallback, HookContext,
-    HookInput, HookJSONOutput, HookMatcher, McpHttpServerConfig, McpSSEServerConfig,
-    McpSdkServerConfig, McpServerConfig, McpServerConnectionStatus, McpServerInfo, McpServerStatus,
-    McpServerStatusConfig, McpServersOption, McpStatusResponse, McpStdioServerConfig,
-    McpToolAnnotations, McpToolInfo, Message, PermissionMode, PermissionResult,
-    PermissionResultAllow, PermissionResultDeny, PermissionUpdate, ResultMessage, SDKSessionInfo,
-    SandboxIgnoreViolations, SandboxNetworkConfig, SandboxSettings, SdkPluginConfig,
-    SessionMessage, SettingSource, StderrCallback, StreamEvent, SystemMessage, SystemPrompt,
-    SystemPromptPreset, TaskNotificationMessage, TaskNotificationStatus, TaskProgressMessage,
-    TaskStartedMessage, TaskUsage, TextBlock, ThinkingBlock, ThinkingConfig, ToolAnnotations,
-    ToolPermissionContext, ToolResultBlock, ToolUseBlock, ToolsOption, ToolsPreset, UserContent,
-    UserMessage,
+    AgentDefinition, AssistantMessage, ClaudeAgentOptions, ContentBlock, ContextUsageCategory,
+    ContextUsageResponse, HookCallback, HookContext, HookInput, HookJSONOutput, HookMatcher,
+    McpHttpServerConfig, McpSSEServerConfig, McpSdkServerConfig, McpServerConfig,
+    McpServerConnectionStatus, McpServerInfo, McpServerStatus, McpServerStatusConfig,
+    McpServersOption, McpStatusResponse, McpStdioServerConfig, McpToolAnnotations, McpToolInfo,
+    Message, PermissionMode, PermissionResult, PermissionResultAllow, PermissionResultDeny,
+    PermissionUpdate, RateLimitEvent, RateLimitInfo, RateLimitStatus, RateLimitType, ResultMessage,
+    SDKSessionInfo, SandboxIgnoreViolations, SandboxNetworkConfig, SandboxSettings,
+    SdkPluginConfig, SessionMessage, SettingSource, StderrCallback, StreamEvent, SystemMessage,
+    SystemPrompt, SystemPromptFile, SystemPromptPreset, TaskBudget, TaskNotificationMessage,
+    TaskNotificationStatus, TaskProgressMessage, TaskStartedMessage, TaskUsage, TextBlock,
+    ThinkingBlock, ThinkingConfig, ToolAnnotations, ToolPermissionContext, ToolResultBlock,
+    ToolUseBlock, ToolsOption, ToolsPreset, UserContent, UserMessage,
 };
 
 /// The version of the Claude Code Rust SDK, sourced from `Cargo.toml`.

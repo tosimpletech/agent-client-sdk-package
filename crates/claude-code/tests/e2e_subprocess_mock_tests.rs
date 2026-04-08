@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use claude_code::{
     ClaudeAgentOptions, ClaudeSdkClient, ContentBlock, InputPrompt, McpServerConfig,
-    McpServersOption, Message, create_sdk_mcp_server, query, tool,
+    McpServersOption, Message, PermissionMode, create_sdk_mcp_server, query, tool,
 };
 use serde_json::{Value, json};
 
@@ -26,7 +26,7 @@ async fn test_dynamic_controls_with_subprocess_transport() {
 
     client.connect(None).await.expect("connect");
     client
-        .set_permission_mode("acceptEdits")
+        .set_permission_mode(PermissionMode::AcceptEdits)
         .await
         .expect("set_permission_mode");
     client

@@ -97,6 +97,15 @@ fn generate_large_agents(
                 prompt: prompt_content,
                 tools: None,
                 model: None,
+                disallowed_tools: None,
+                skills: None,
+                memory: None,
+                mcp_servers: None,
+                initial_prompt: None,
+                max_turns: None,
+                background: None,
+                effort: None,
+                permission_mode: None,
             },
         );
     }
@@ -117,6 +126,15 @@ async fn test_e2e_agent_definition_in_init() {
             prompt: "You are a test agent.".to_string(),
             tools: Some(vec!["Read".to_string()]),
             model: Some("sonnet".to_string()),
+            disallowed_tools: None,
+            skills: None,
+            memory: None,
+            mcp_servers: None,
+            initial_prompt: None,
+            max_turns: None,
+            background: None,
+            effort: None,
+            permission_mode: None,
         },
     );
 
@@ -148,6 +166,15 @@ async fn test_e2e_agent_via_query_function() {
             prompt: "You are a query-function test agent.".to_string(),
             tools: None,
             model: None,
+            disallowed_tools: None,
+            skills: None,
+            memory: None,
+            mcp_servers: None,
+            initial_prompt: None,
+            max_turns: None,
+            background: None,
+            effort: None,
+            permission_mode: None,
         },
     );
 

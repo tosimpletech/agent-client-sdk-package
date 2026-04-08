@@ -371,6 +371,7 @@ impl SubprocessCliTransport {
             PermissionMode::AcceptEdits => "acceptEdits",
             PermissionMode::Plan => "plan",
             PermissionMode::BypassPermissions => "bypassPermissions",
+            PermissionMode::DontAsk => "dontAsk",
         }
     }
 
@@ -497,6 +498,10 @@ impl SubprocessCliTransport {
                     cmd.push(append.clone());
                 }
             }
+            Some(SystemPrompt::File(file)) => {
+                cmd.push("--system-prompt-file".to_string());
+                cmd.push(file.path.clone());
+            }
         }
 
         if let Some(tools) = &self.options.tools {
@@ -570,6 +575,11 @@ impl SubprocessCliTransport {
             cmd.push(resume.clone());
         }
 
+        if let Some(session_id) = &self.options.session_id {
+            cmd.push("--session-id".to_string());
+            cmd.push(session_id.clone());
+        }
+
         if let Some(settings) = self.build_settings_value()? {
             cmd.push("--settings".to_string());
             cmd.push(settings);
@@ -606,20 +616,16 @@ impl SubprocessCliTransport {
             cmd.push("--fork-session".to_string());
         }
 
-        let setting_sources = self
-            .options
-            .setting_sources
-            .as_ref()
-            .map(|sources| {
-                sources
-                    .iter()
-                    .map(Self::setting_source_to_string)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            })
-            .unwrap_or_default();
-        cmd.push("--setting-sources".to_string());
-        cmd.push(setting_sources);
+        if let Some(setting_sources) = self.options.setting_sources.as_ref().map(|sources| {
+            sources
+                .iter()
+                .map(Self::setting_source_to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        }) {
+            cmd.push("--setting-sources".to_string());
+            cmd.push(setting_sources);
+        }
 
         for plugin in &self.options.plugins {
             if plugin.type_ != "local" {
@@ -668,6 +674,18 @@ impl SubprocessCliTransport {
             cmd.push(effort.clone());
         }
 
+        if let Some(task_budget) = &self.options.task_budget {
+            cmd.push("--add-betas".to_string());
+            cmd.push("task-budgets-2026-03-13".to_string());
+            let output_config = json!({
+                "task_budget": {
+                    "total": task_budget.total
+                }
+            });
+            cmd.push("--output-config".to_string());
+            cmd.push(output_config.to_string());
+        }
+
         if let Some(Value::Object(output_format)) = &self.options.output_format
             && output_format.get("type").and_then(Value::as_str) == Some("json_schema")
             && let Some(schema) = output_format.get("schema")
@@ -713,6 +731,7 @@ impl Transport for SubprocessCliTransport {
             command.env("PWD", cwd.to_string_lossy().to_string());
         }
 
+        command.env_remove("CLAUDECODE");
         command.env("CLAUDE_CODE_ENTRYPOINT", "sdk-rust");
         command.env("CLAUDE_AGENT_SDK_VERSION", env!("CARGO_PKG_VERSION"));
         if self.options.enable_file_checkpointing {
